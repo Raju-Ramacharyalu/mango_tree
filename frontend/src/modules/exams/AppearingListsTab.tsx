@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Download, Printer, Search, Layers, Users } from 'lucide-react'
 import { supabase } from '@/services/supabase'
 import type { AppearingRow, ExamCycle, ExamSessionCode, PaymentStatus, RegistrationCourseCategory, RegistrationStatus, EligibilityStatus } from '@/types/exams'
+import { fetchInstitutionBranding, openBrandedPrintWindow, renderBrandedHeaderHtml, renderSignatureBlockHtml, signPrivateAssets } from './printBranding'
 import { cn } from '@/utils/cn'
 
 interface Props {
@@ -275,13 +276,11 @@ export function AppearingListsTab({ institutionId, institutionName, cycle }: Pro
     URL.revokeObjectURL(url)
   }
 
-  const printAppearingList = () => {
+  const printAppearingList = async () => {
     if (!cycle) return
-    const win = window.open('', '_blank', 'width=1024,height=780')
-    if (!win) {
-      window.alert('Please allow pop-ups in your browser to print Appearing Lists.')
-      return
-    }
+    const branding = await fetchInstitutionBranding(institutionId, institutionName)
+    const sigs = await signPrivateAssets([branding.coe_signature_path])
+    const coeSigUrl = branding.coe_signature_path ? sigs.get(branding.coe_signature_path) : null
 
     const tableHtml =
       viewMode === 'SUMMARY'
@@ -331,42 +330,25 @@ export function AppearingListsTab({ institutionId, institutionName, cycle }: Pro
             </tbody>
           </table>`
 
-    win.document.write(`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>${escapeHtml(cycle.code)} — Appearing List</title>
-  <style>
-    @page { size: A4 portrait; margin: 12mm; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; color: #111; font-size: 11px; margin: 0; }
-    .hdr { text-align: center; border-bottom: 2px solid #111; padding-bottom: 8px; margin-bottom: 12px; }
-    .hdr h1 { font-size: 15px; margin: 0; text-transform: uppercase; }
-    .hdr p { margin: 3px 0 0; font-size: 11px; color: #333; }
-    .meta { display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 8px; color: #444; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border: 1px solid #444; padding: 4px 6px; text-align: left; }
-    th { background: #f1f5f9; font-weight: 600; }
-    .sign { display: flex; justify-content: space-between; margin-top: 36px; font-weight: 600; }
-  </style>
-</head>
-<body>
-  <div class="hdr">
-    <h1>${escapeHtml(institutionName)}</h1>
-    <p><strong>${escapeHtml(cycle.name)} (${escapeHtml(cycle.code)})</strong> — ${viewMode === 'SUMMARY' ? 'Course-wise Appearing Summary (QPDS Preview)' : 'Student-wise Appearing Roster'}</p>
-  </div>
-  <div class="meta">
-    <span>Filter: Program=${escapeHtml(programFilter)} | Period=${escapeHtml(periodFilter)} | Course=${escapeHtml(courseFilter)}</span>
-    <span>Total Entries: ${filteredRows.length} · Generated: ${new Date().toLocaleString('en-IN')}</span>
-  </div>
-  ${tableHtml}
-  <div class="sign">
-    <span>Prepared By (Exam Section)</span>
-    <span>Controller of Examinations (COE)</span>
-  </div>
-  <script>window.onload = function(){ window.print(); };</script>
-</body>
-</html>`)
-    win.document.close()
+    const badge = `${cycle.name} (${cycle.code}) — ${viewMode === 'SUMMARY' ? 'Course-Wise Appearing Summary' : 'Student-Wise Appearing Roster'}`
+    openBrandedPrintWindow({
+      title: `${cycle.code} — Appearing List`,
+      landscape: false,
+      branding,
+      watermarkMode: 'fixed',
+      bodyHtml: `
+        ${renderBrandedHeaderHtml(branding, badge)}
+        <div class="meta">
+          <span>Filter: Program=${escapeHtml(programFilter)} | Period=${escapeHtml(periodFilter)} | Course=${escapeHtml(courseFilter)}</span>
+          <span>Total Entries: ${filteredRows.length} · Generated: ${new Date().toLocaleString('en-IN')}</span>
+        </div>
+        ${tableHtml}
+        <div class="signatures">
+          ${renderSignatureBlockHtml('Prepared By (Exam Section)', null)}
+          ${renderSignatureBlockHtml('Controller of Examinations (COE)', coeSigUrl)}
+        </div>
+      `,
+    })
   }
 
   if (!cycle) {

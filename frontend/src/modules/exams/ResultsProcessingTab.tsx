@@ -25,6 +25,7 @@ import type {
   SemesterResultStatus,
 } from '@/types/exams'
 import { evaluateCourseGrade, normalizeCourseCode } from './bundleEngine'
+import { fetchInstitutionBranding, openBrandedPrintWindow, renderBrandedHeaderHtml, renderSignatureBlockHtml, renderWatermarkHtml, signPrivateAssets } from './printBranding'
 import { cn } from '@/utils/cn'
 
 interface Props {
@@ -650,23 +651,20 @@ export function ResultsProcessingTab({
     })
   }, [semesterResults, programFilter, searchQuery])
 
-  const printGradeCards = (batch: ExamSemesterResultItem[]) => {
+  const printGradeCards = async (batch: ExamSemesterResultItem[]) => {
     if (!cycle || batch.length === 0) return
-    const win = window.open('', '_blank', 'width=960,height=820')
-    if (!win) {
-      window.alert('Please allow pop-ups in your browser to print Provisional Grade Cards.')
-      return
-    }
+    const branding = await fetchInstitutionBranding(institutionId, institutionName)
+    const sigs = await signPrivateAssets([branding.coe_signature_path, branding.principal_signature_path])
+    const coeSigUrl = branding.coe_signature_path ? sigs.get(branding.coe_signature_path) : null
+    const principalSigUrl = branding.principal_signature_path ? sigs.get(branding.principal_signature_path) : null
 
     const pages = batch
       .map((sr) => {
         const lines = courseResults.filter((c) => c.student_id === sr.student_id)
         return `<section class="page">
-          <div class="box">
-            <div class="hdr">
-              <h1>${escapeHtml(institutionName)}</h1>
-              <p><strong>PROVISIONAL STATEMENT OF GRADES — ${escapeHtml(cycle.name)} (${escapeHtml(cycle.code)})</strong></p>
-            </div>
+          ${renderWatermarkHtml(branding, 'per-page')}
+          <div class="box doc-body">
+            ${renderBrandedHeaderHtml(branding, `PROVISIONAL STATEMENT OF GRADES — ${cycle.name} (${cycle.code})`)}
             <table class="info">
               <tr><td class="lbl">USN</td><td><strong>${escapeHtml(sr.student_reg_no)}</strong></td><td class="lbl">Program</td><td>${escapeHtml(sr.program_code)} — ${escapeHtml(sr.program_name)}</td></tr>
               <tr><td class="lbl">Candidate Name</td><td><strong>${escapeHtml(sr.student_name)}</strong></td><td class="lbl">Semester</td><td>${escapeHtml(sr.period_name ?? '—')}</td></tr>
@@ -703,50 +701,33 @@ export function ResultsProcessingTab({
                   .join('')}
               </tbody>
             </table>
-            <div class="summary">
+            <div class="meta">
               <span><strong>Credits Registered:</strong> ${sr.credits_registered}</span>
               <span><strong>Credits Earned:</strong> ${sr.credits_earned}</span>
               <span><strong>SGPA:</strong> ${sr.sgpa.toFixed(2)}</span>
               <span><strong>Result:</strong> ${escapeHtml(sr.overall_status)}</span>
             </div>
-            <div class="sign">
-              <span>Verified By</span>
-              <span>Controller of Examinations (COE)</span>
-              <span>Principal</span>
+            <div class="signatures">
+              ${renderSignatureBlockHtml('Verified By', null)}
+              ${renderSignatureBlockHtml('Controller of Examinations (COE)', coeSigUrl)}
+              ${renderSignatureBlockHtml('Principal', principalSigUrl)}
             </div>
           </div>
         </section>`
       })
       .join('')
 
-    win.document.write(`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>${escapeHtml(cycle.code)} — Provisional Grade Cards</title>
-  <style>
-    @page { size: A4 portrait; margin: 10mm; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; color: #111; font-size: 11px; margin: 0; }
-    .page { page-break-after: always; }
-    .page:last-child { page-break-after: auto; }
-    .box { border: 1.5px solid #1e293b; padding: 14px; }
-    .hdr { text-align: center; border-bottom: 1.5px solid #1e293b; padding-bottom: 8px; margin-bottom: 10px; }
-    .hdr h1 { margin: 0; font-size: 15px; text-transform: uppercase; }
-    .hdr p { margin: 3px 0 0; font-size: 11px; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-    th, td { border: 1px solid #475569; padding: 4px 6px; text-align: left; }
-    th { background: #f1f5f9; }
-    .info .lbl { background: #f8fafc; font-weight: 600; width: 110px; }
-    .summary { display: flex; justify-content: space-between; background: #f8fafc; border: 1px solid #94a3b8; padding: 7px 10px; font-size: 11.5px; }
-    .sign { display: flex; justify-content: space-between; margin-top: 48px; font-weight: 600; }
-  </style>
-</head>
-<body>
-  ${pages}
-  <script>window.onload = function(){ window.print(); };</script>
-</body>
-</html>`)
-    win.document.close()
+    openBrandedPrintWindow({
+      title: `${cycle.code} — Provisional Grade Cards`,
+      landscape: false,
+      branding,
+      watermarkMode: 'per-page',
+      extraCss: `
+        .box { border: 1.5px solid #1e293b; padding: 14px; }
+        .info .lbl { background: #f8fafc; font-weight: 600; width: 110px; }
+      `,
+      bodyHtml: pages,
+    })
   }
 
   if (!cycle) {

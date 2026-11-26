@@ -11,6 +11,7 @@ import type {
   ExamSessionCode,
 } from '@/types/exams'
 import { cleanRoomNumber } from './allocationEngine'
+import { fetchInstitutionBranding, openBrandedPrintWindow, renderBrandedHeaderHtml, renderSignatureBlockHtml, renderWatermarkHtml, signPrivateAssets } from './printBranding'
 import { cn } from '@/utils/cn'
 
 interface Props {
@@ -357,47 +358,12 @@ export function ExamDayFormsTab({ institutionId, institutionName, cycle, canMana
       })
   }, [roomNumbers, seats, roomFilter])
 
-  const openPrintWindow = (title: string, landscape: boolean, bodyHtml: string) => {
-    const win = window.open('', '_blank', 'width=1050,height=800')
-    if (!win) {
-      window.alert('Please allow pop-ups in your browser to print A4 exam documents.')
-      return
-    }
-    win.document.write(`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>${escapeHtml(title)}</title>
-  <style>
-    @page { size: A4 ${landscape ? 'landscape' : 'portrait'}; margin: 10mm; }
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; color: #111; font-size: 11px; margin: 0; }
-    .page { page-break-after: always; }
-    .page:last-child { page-break-after: auto; }
-    .hdr { text-align: center; border-bottom: 1.5px solid #111; padding-bottom: 6px; margin-bottom: 10px; }
-    .hdr h1 { margin: 0; font-size: 15px; text-transform: uppercase; }
-    .hdr p { margin: 2px 0 0; font-size: 11px; color: #333; }
-    .meta { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 10.5px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 5px 8px; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-    th, td { border: 1px solid #444; padding: 4px 6px; text-align: left; }
-    th { background: #f1f5f9; font-weight: 600; }
-    .sign { display: flex; justify-content: space-between; margin-top: 38px; font-weight: 600; font-size: 10.5px; }
-    .poster-box { border: 2px solid #111; padding: 14px; }
-    .poster-room { font-size: 28px; font-weight: 800; text-align: center; margin: 10px 0 4px; letter-spacing: 0.5px; }
-    .poster-sub { text-align: center; font-size: 13px; color: #334155; margin-bottom: 14px; }
-  </style>
-</head>
-<body>
-  ${bodyHtml}
-  <script>window.onload = function(){ window.print(); };</script>
-</body>
-</html>`)
-    win.document.close()
-  }
-
-  const printFormB = () => {
+  const printFormB = async () => {
     if (!cycle || !activeRun) return
-    // Group Form B sheets by (Room + Effective Course) for clean invigilator sheets
+    const branding = await fetchInstitutionBranding(institutionId, institutionName)
+    const sigs = await signPrivateAssets([branding.coe_signature_path])
+    const coeSigUrl = branding.coe_signature_path ? sigs.get(branding.coe_signature_path) : null
+
     const sheetMap = new Map<string, ExamSeatAllotmentItem[]>()
     for (const s of formBSeats) {
       const key = `${s.room_number}::${s.effective_course_code}`
@@ -412,63 +378,73 @@ export function ExamDayFormsTab({ institutionId, institutionName, cycle, canMana
         const present = list.filter((s) => s.attendance_status === 'PRESENT' || s.attendance_status === 'MALPRACTICE').length
         const absent = list.filter((s) => s.attendance_status === 'ABSENT').length
         return `<section class="page">
-          <div class="hdr">
-            <h1>${escapeHtml(institutionName)}</h1>
-            <p><strong>FORM B — ROOM ATTENDANCE & ANSWER BOOKLET STATEMENT</strong> (${escapeHtml(cycle.name)})</p>
-          </div>
-          <div class="meta">
-            <span><strong>Date / Session:</strong> ${escapeHtml(activeRun.exam_date)} (${escapeHtml(activeRun.session_code)})</span>
-            <span><strong>Room:</strong> ${escapeHtml(first.room_number)} ${first.block_name ? `(${escapeHtml(first.block_name)})` : ''}</span>
-            <span><strong>Course:</strong> ${escapeHtml(first.effective_course_code)} — ${escapeHtml(first.course_title)}</span>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th style="width:36px">Seat</th>
-                <th style="width:110px">USN</th>
-                <th>Candidate Name</th>
-                <th style="width:62px">Branch</th>
-                <th style="width:110px">Booklet Sl. No.</th>
-                <th style="width:76px">Status</th>
-                <th style="width:115px">Candidate Signature</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${list
-                .map(
-                  (s) => `<tr>
-                    <td style="text-align:center">${s.seat_number}</td>
-                    <td><strong>${escapeHtml(s.student_reg_no)}</strong></td>
-                    <td>${escapeHtml(s.student_name)}</td>
-                    <td style="text-align:center">${escapeHtml(s.program_code)}</td>
-                    <td>${escapeHtml(s.booklet_number ?? '')}</td>
-                    <td style="text-align:center">${s.attendance_status === 'ABSENT' ? '<strong>ABSENT</strong>' : s.attendance_status === 'MALPRACTICE' ? '<strong>MP</strong>' : ''}</td>
-                    <td></td>
-                  </tr>`
-                )
-                .join('')}
-            </tbody>
-          </table>
-          <div class="meta">
-            <span><strong>Allotted:</strong> ${list.length}</span>
-            <span><strong>Present:</strong> ${present}</span>
-            <span><strong>Absent:</strong> ${absent}</span>
-            <span><strong>Scripts Handed Over:</strong> ________</span>
-          </div>
-          <div class="sign">
-            <span>Room Invigilator Signature & Name</span>
-            <span>Deputy Chief Superintendent (DCS)</span>
-            <span>Controller of Examinations (COE)</span>
+          ${renderWatermarkHtml(branding, 'per-page')}
+          <div class="doc-body">
+            ${renderBrandedHeaderHtml(branding, `FORM B — ROOM ATTENDANCE & BOOKLET STATEMENT (${cycle.code})`)}
+            <div class="meta">
+              <span><strong>Date / Session:</strong> ${escapeHtml(activeRun.exam_date)} (${escapeHtml(activeRun.session_code)})</span>
+              <span><strong>Room:</strong> ${escapeHtml(first.room_number)} ${first.block_name ? `(${escapeHtml(first.block_name)})` : ''}</span>
+              <span><strong>Course:</strong> ${escapeHtml(first.effective_course_code)} — ${escapeHtml(first.course_title)}</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:36px">Seat</th>
+                  <th style="width:110px">USN</th>
+                  <th>Candidate Name</th>
+                  <th style="width:62px">Branch</th>
+                  <th style="width:110px">Booklet Sl. No.</th>
+                  <th style="width:76px">Status</th>
+                  <th style="width:115px">Candidate Signature</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${list
+                  .map(
+                    (s) => `<tr>
+                      <td style="text-align:center">${s.seat_number}</td>
+                      <td><strong>${escapeHtml(s.student_reg_no)}</strong></td>
+                      <td>${escapeHtml(s.student_name)}</td>
+                      <td style="text-align:center">${escapeHtml(s.program_code)}</td>
+                      <td>${escapeHtml(s.booklet_number ?? '')}</td>
+                      <td style="text-align:center">${s.attendance_status === 'ABSENT' ? '<strong>ABSENT</strong>' : s.attendance_status === 'MALPRACTICE' ? '<strong>MP</strong>' : ''}</td>
+                      <td></td>
+                    </tr>`
+                  )
+                  .join('')}
+              </tbody>
+            </table>
+            <div class="meta">
+              <span><strong>Allotted:</strong> ${list.length}</span>
+              <span><strong>Present:</strong> ${present}</span>
+              <span><strong>Absent:</strong> ${absent}</span>
+              <span><strong>Scripts Handed Over:</strong> ________</span>
+            </div>
+            <div class="signatures">
+              ${renderSignatureBlockHtml('Room Invigilator Signature & Name', null)}
+              ${renderSignatureBlockHtml('Deputy Chief Superintendent (DCS)', null)}
+              ${renderSignatureBlockHtml('Controller of Examinations (COE)', coeSigUrl)}
+            </div>
           </div>
         </section>`
       })
       .join('')
 
-    openPrintWindow(`${cycle.code}_${activeRun.exam_date}_FormB`, false, pages)
+    openBrandedPrintWindow({
+      title: `${cycle.code}_${activeRun.exam_date}_FormB`,
+      landscape: false,
+      branding,
+      watermarkMode: 'per-page',
+      bodyHtml: pages,
+    })
   }
 
-  const printFormA = () => {
+  const printFormA = async () => {
     if (!cycle || !activeRun) return
+    const branding = await fetchInstitutionBranding(institutionId, institutionName)
+    const sigs = await signPrivateAssets([branding.coe_signature_path])
+    const coeSigUrl = branding.coe_signature_path ? sigs.get(branding.coe_signature_path) : null
+
     const totals = formARows.reduce(
       (acc, r) => ({
         total: acc.total + r.total,
@@ -478,12 +454,12 @@ export function ExamDayFormsTab({ institutionId, institutionName, cycle, canMana
       }),
       { total: 0, present: 0, absent: 0, mp: 0 }
     )
-    const html = `<section class="page">
-      <div class="hdr">
-        <h1>${escapeHtml(institutionName)}</h1>
-        <p><strong>FORM A — CONSOLIDATED COURSE & BRANCH ATTENDANCE / ABSENTEE STATEMENT</strong></p>
-        <p>${escapeHtml(cycle.name)} (${escapeHtml(cycle.code)}) · Date: ${escapeHtml(activeRun.exam_date)} (${escapeHtml(activeRun.session_code)})</p>
-      </div>
+    const html = `
+      ${renderBrandedHeaderHtml(
+        branding,
+        'FORM A — CONSOLIDATED COURSE & BRANCH ATTENDANCE / ABSENTEE STATEMENT',
+        `${cycle.name} (${cycle.code}) · Date: ${activeRun.exam_date} (${activeRun.session_code})`
+      )}
       <table>
         <thead>
           <tr>
@@ -528,24 +504,34 @@ export function ExamDayFormsTab({ institutionId, institutionName, cycle, canMana
           </tr>
         </tbody>
       </table>
-      <div class="sign">
-        <span>Exam Section Coordinator</span>
-        <span>Chief Superintendent</span>
-        <span>Controller of Examinations (COE)</span>
-      </div>
-    </section>`
-    openPrintWindow(`${cycle.code}_${activeRun.exam_date}_FormA`, true, html)
+      <div class="signatures">
+        ${renderSignatureBlockHtml('Exam Section Coordinator', null)}
+        ${renderSignatureBlockHtml('Chief Superintendent', null)}
+        ${renderSignatureBlockHtml('Controller of Examinations (COE)', coeSigUrl)}
+      </div>`
+
+    openBrandedPrintWindow({
+      title: `${cycle.code}_${activeRun.exam_date}_FormA`,
+      landscape: true,
+      branding,
+      watermarkMode: 'fixed',
+      bodyHtml: html,
+    })
   }
 
-  const printQpds = () => {
+  const printQpds = async () => {
     if (!cycle || !activeRun) return
+    const branding = await fetchInstitutionBranding(institutionId, institutionName)
+    const sigs = await signPrivateAssets([branding.coe_signature_path])
+    const coeSigUrl = branding.coe_signature_path ? sigs.get(branding.coe_signature_path) : null
+
     const extra = qpdsData.extra
-    const html = `<section class="page">
-      <div class="hdr">
-        <h1>${escapeHtml(institutionName)}</h1>
-        <p><strong>ROOM-WISE QUESTION PAPER DISTRIBUTION STATEMENT (QPDS)</strong></p>
-        <p>${escapeHtml(cycle.name)} (${escapeHtml(cycle.code)}) · Date: ${escapeHtml(activeRun.exam_date)} (${escapeHtml(activeRun.session_code)}) · Buffer: +${extra} copy/course/room</p>
-      </div>
+    const html = `
+      ${renderBrandedHeaderHtml(
+        branding,
+        'ROOM-WISE QUESTION PAPER DISTRIBUTION STATEMENT (QPDS)',
+        `${cycle.name} (${cycle.code}) · Date: ${activeRun.exam_date} (${activeRun.session_code}) · Buffer: +${extra} copy/course/room`
+      )}
       <table>
         <thead>
           <tr>
@@ -589,26 +575,35 @@ export function ExamDayFormsTab({ institutionId, institutionName, cycle, canMana
           </tr>
         </tbody>
       </table>
-      <div class="sign">
-        <span>QP Custodian</span>
-        <span>Deputy Chief Superintendent</span>
-        <span>Controller of Examinations (COE)</span>
-      </div>
-    </section>`
-    openPrintWindow(`${cycle.code}_${activeRun.exam_date}_QPDS`, true, html)
+      <div class="signatures">
+        ${renderSignatureBlockHtml('QP Custodian', null)}
+        ${renderSignatureBlockHtml('Deputy Chief Superintendent', null)}
+        ${renderSignatureBlockHtml('Controller of Examinations (COE)', coeSigUrl)}
+      </div>`
+
+    openBrandedPrintWindow({
+      title: `${cycle.code}_${activeRun.exam_date}_QPDS`,
+      landscape: true,
+      branding,
+      watermarkMode: 'fixed',
+      bodyHtml: html,
+    })
   }
 
-  const printRoomPosters = () => {
+  const printRoomPosters = async () => {
     if (!cycle || !activeRun) return
+    const branding = await fetchInstitutionBranding(institutionId, institutionName)
+
     const pages = posterRooms
       .map(
         (rm) => `<section class="page">
-          <div class="poster-box">
-            <div class="hdr">
-              <h1>${escapeHtml(institutionName)}</h1>
-              <p><strong>${escapeHtml(cycle.name)} (${escapeHtml(cycle.code)})</strong></p>
-              <p>Date: <strong>${escapeHtml(activeRun.exam_date)}</strong> · Session: <strong>${escapeHtml(activeRun.session_code)}</strong></p>
-            </div>
+          ${renderWatermarkHtml(branding, 'per-page')}
+          <div class="poster-box doc-body">
+            ${renderBrandedHeaderHtml(
+              branding,
+              `EXAMINATION SEATING CHART — ${cycle.name} (${cycle.code})`,
+              `Date: ${activeRun.exam_date} · Session: ${activeRun.session_code}`
+            )}
             <div class="poster-room">ROOM NO: ${escapeHtml(rm.room_number)}</div>
             <div class="poster-sub">${escapeHtml(rm.block_floor || 'Examination Hall')}${rm.remarks ? ` · ${escapeHtml(rm.remarks)}` : ''}</div>
             <table>
@@ -648,7 +643,19 @@ export function ExamDayFormsTab({ institutionId, institutionName, cycle, canMana
         </section>`
       )
       .join('')
-    openPrintWindow(`${cycle.code}_${activeRun.exam_date}_RoomPosters`, false, pages)
+
+    openBrandedPrintWindow({
+      title: `${cycle.code}_${activeRun.exam_date}_RoomPosters`,
+      landscape: false,
+      branding,
+      watermarkMode: 'per-page',
+      extraCss: `
+        .poster-box { border: 2px solid #1e293b; padding: 14px; }
+        .poster-room { font-size: 28px; font-weight: 800; text-align: center; margin: 10px 0 4px; letter-spacing: 0.5px; }
+        .poster-sub { text-align: center; font-size: 13px; color: #334155; margin-bottom: 14px; }
+      `,
+      bodyHtml: pages,
+    })
   }
 
   if (!cycle) {

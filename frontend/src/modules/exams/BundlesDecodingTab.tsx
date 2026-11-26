@@ -30,6 +30,7 @@ import {
   normalizeCourseCode,
   type BundleSourceScript,
 } from './bundleEngine'
+import { fetchInstitutionBranding, openBrandedPrintWindow, renderBrandedHeaderHtml, renderSignatureBlockHtml, signPrivateAssets } from './printBranding'
 import { cn } from '@/utils/cn'
 
 interface Props {
@@ -682,15 +683,13 @@ export function BundlesDecodingTab({ institutionId, institutionName, cycle, canD
     })
   }
 
-  const printEvaluatorMarksSheet = (includeDecodingKey: boolean) => {
+  const printEvaluatorMarksSheet = async (includeDecodingKey: boolean) => {
     if (!cycle || !activeBundle) return
-    const evalName = evaluatorDraftName.trim() || activeBundle.evaluator_name || '________________________'
-    const win = window.open('', '_blank', 'width=980,height=820')
-    if (!win) {
-      window.alert('Please allow pop-ups in your browser to print marks sheets.')
-      return
-    }
+    const branding = await fetchInstitutionBranding(institutionId, institutionName)
+    const sigs = await signPrivateAssets([branding.coe_signature_path])
+    const coeSigUrl = branding.coe_signature_path ? sigs.get(branding.coe_signature_path) : null
 
+    const evalName = evaluatorDraftName.trim() || activeBundle.evaluator_name || '________________________'
     const titleText = includeDecodingKey
       ? 'COE CONFIDENTIAL CODING & DECODING KEY SHEET'
       : 'BLIND EVALUATOR MARKS ENTRY SHEET'
@@ -712,59 +711,41 @@ export function BundlesDecodingTab({ institutionId, institutionName, cycle, canD
       )
       .join('')
 
-    win.document.write(`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>${escapeHtml(activeBundle.bundle_code)} — ${escapeHtml(titleText)}</title>
-  <style>
-    @page { size: A4 portrait; margin: 10mm; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; color: #111; font-size: 11px; margin: 0; }
-    .hdr { text-align: center; border-bottom: 1.5px solid #111; padding-bottom: 6px; margin-bottom: 10px; }
-    .hdr h1 { margin: 0; font-size: 15px; text-transform: uppercase; }
-    .hdr p { margin: 2px 0 0; font-size: 11px; }
-    .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 6px 10px; margin-bottom: 10px; font-size: 10.5px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border: 1px solid #444; padding: 4px 6px; text-align: left; }
-    th { background: #f1f5f9; }
-    .sign { display: flex; justify-content: space-between; margin-top: 40px; font-weight: 600; font-size: 10.5px; }
-  </style>
-</head>
-<body>
-  <div class="hdr">
-    <h1>${escapeHtml(institutionName)}</h1>
-    <p><strong>${escapeHtml(titleText)}</strong></p>
-    <p>${escapeHtml(cycle.name)} (${escapeHtml(cycle.code)})</p>
-  </div>
-  <div class="meta">
-    <span><strong>Bundle ID:</strong> ${escapeHtml(activeBundle.bundle_code)}</span>
-    <span><strong>Course:</strong> ${escapeHtml(activeBundle.effective_course_code)} — ${escapeHtml(activeBundle.course_title)}</span>
-    <span><strong>Branch / Level:</strong> ${escapeHtml(activeBundle.program_code)} (${escapeHtml(activeBundle.program_level)})${activeBundle.usn_series_prefix ? ` · Series ${escapeHtml(activeBundle.usn_series_prefix)}` : ''}</span>
-    <span><strong>Script Count:</strong> ${bundleScripts.length} · Max SEE: ${activeBundle.see_max_marks} (Scaled to ${activeBundle.see_scale_to})</span>
-    <span style="grid-column:span 2"><strong>Evaluator Name:</strong> ${escapeHtml(evalName)}</span>
-  </div>
-  <table>
-    <thead>
-      <tr>
-        <th style="width:36px">Sl.</th>
-        <th style="width:170px">Dummy Script Code</th>
-        ${includeDecodingKey ? '<th style="width:115px">USN</th><th>Candidate Name</th>' : ''}
-        <th style="width:90px;text-align:center">SEE Marks (/${activeBundle.see_max_marks})</th>
-        <th style="width:90px;text-align:center">Scaled (/${activeBundle.see_scale_to})</th>
-        <th>Remarks</th>
-      </tr>
-    </thead>
-    <tbody>${rowsHtml}</tbody>
-  </table>
-  <div class="sign">
-    <span>Evaluator: ${escapeHtml(evalName)}</span>
-    <span>Chief Valuator / Custodian</span>
-    <span>Controller of Examinations (COE)</span>
-  </div>
-  <script>window.onload = function(){ window.print(); };</script>
-</body>
-</html>`)
-    win.document.close()
+    openBrandedPrintWindow({
+      title: `${activeBundle.bundle_code} — ${titleText}`,
+      landscape: false,
+      branding,
+      watermarkMode: 'fixed',
+      extraCss: `.meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 6px 10px; margin-bottom: 10px; font-size: 10.5px; }`,
+      bodyHtml: `
+        ${renderBrandedHeaderHtml(branding, titleText, `${cycle.name} (${cycle.code})`)}
+        <div class="meta-grid">
+          <span><strong>Bundle ID:</strong> ${escapeHtml(activeBundle.bundle_code)}</span>
+          <span><strong>Course:</strong> ${escapeHtml(activeBundle.effective_course_code)} — ${escapeHtml(activeBundle.course_title)}</span>
+          <span><strong>Branch / Level:</strong> ${escapeHtml(activeBundle.program_code)} (${escapeHtml(activeBundle.program_level)})${activeBundle.usn_series_prefix ? ` · Series ${escapeHtml(activeBundle.usn_series_prefix)}` : ''}</span>
+          <span><strong>Script Count:</strong> ${bundleScripts.length} · Max SEE: ${activeBundle.see_max_marks} (Scaled to ${activeBundle.see_scale_to})</span>
+          <span style="grid-column:span 2"><strong>Evaluator Name:</strong> ${escapeHtml(evalName)}</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:36px">Sl.</th>
+              <th style="width:170px">Dummy Script Code</th>
+              ${includeDecodingKey ? '<th style="width:115px">USN</th><th>Candidate Name</th>' : ''}
+              <th style="width:90px;text-align:center">SEE Marks (/${activeBundle.see_max_marks})</th>
+              <th style="width:90px;text-align:center">Scaled (/${activeBundle.see_scale_to})</th>
+              <th>Remarks</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+        <div class="signatures">
+          ${renderSignatureBlockHtml(`Evaluator: ${evalName}`, null)}
+          ${renderSignatureBlockHtml('Chief Valuator / Custodian', null)}
+          ${renderSignatureBlockHtml('Controller of Examinations (COE)', coeSigUrl)}
+        </div>
+      `,
+    })
   }
 
   if (!cycle) {

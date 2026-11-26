@@ -21,6 +21,15 @@ import type {
   PaymentStatus,
   RegistrationCourseCategory,
 } from '@/types/exams'
+import {
+  escapeHtml,
+  fetchInstitutionBranding,
+  openBrandedPrintWindow,
+  renderBrandedHeaderHtml,
+  renderSignatureBlockHtml,
+  renderWatermarkHtml,
+  signPrivateAssets,
+} from './printBranding'
 import { cn } from '@/utils/cn'
 
 interface Props {
@@ -30,27 +39,9 @@ interface Props {
   canPrint: boolean
 }
 
-interface InstitutionHeaderInfo {
-  name: string
-  short_name: string | null
-  university_affiliation: string | null
-  logo_url: string | null
-  address_line1: string | null
-  city: string | null
-  state: string | null
-}
-
 function unwrap<T>(val: T | T[] | null | undefined): T | null {
   if (!val) return null
   return Array.isArray(val) ? (val[0] ?? null) : val
-}
-
-function escapeHtml(val: string | number | null | undefined): string {
-  return String(val ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
 }
 
 function fmtTime(t: string | null): string {
@@ -73,19 +64,7 @@ export function HallTicketsTab({ institutionId, cycle, canIssue, canPrint }: Pro
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [issueNotice, setIssueNotice] = useState<string | null>(null)
-
-  const { data: instInfo } = useQuery<InstitutionHeaderInfo | null>({
-    queryKey: ['exam_institution_header', institutionId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('institutions')
-        .select('name, short_name, university_affiliation, logo_url, address_line1, city, state')
-        .eq('id', institutionId)
-        .single()
-      if (error) throw error
-      return data as InstitutionHeaderInfo
-    },
-  })
+  const [isPrinting, setIsPrinting] = useState(false)
 
   const { data: tickets = [], isLoading } = useQuery<HallTicketItem[]>({
     queryKey: ['exam_hall_tickets', institutionId, cycle?.id],
@@ -155,7 +134,7 @@ export function HallTicketsTab({ institutionId, cycle, canIssue, canPrint }: Pro
         const sec = enr
           ? unwrap(enr.academic_sections as { section_name: string } | { section_name: string }[] | null)
           : null
-        const rawCourses = ((er?.exam_registration_courses as Array<Record<string, unknown>>) ?? [])
+        const rawCourses = (er?.exam_registration_courses as Array<Record<string, unknown>>) ?? []
 
         const courses: HallTicketCourseLine[] = rawCourses
           .map((rc) => {
@@ -304,161 +283,137 @@ export function HallTicketsTab({ institutionId, cycle, canIssue, canPrint }: Pro
       return
     }
 
-    const win = window.open('', '_blank', 'width=960,height=840')
-    if (!win) {
-      window.alert('Please allow pop-ups in your browser to open the A4 Hall Ticket print sheet.')
-      return
-    }
+    setIsPrinting(true)
+    try {
+      const branding = await fetchInstitutionBranding(institutionId)
+      const signedMap = await signPrivateAssets([
+        branding.coe_signature_path,
+        branding.principal_signature_path,
+        ...printable.map((t) => t.student_photo_url),
+      ])
 
-    const instTitle = instInfo?.name ?? 'Institution'
-    const affiliation = instInfo?.university_affiliation ?? ''
-    const addr = [instInfo?.address_line1, instInfo?.city, instInfo?.state].filter(Boolean).join(', ')
+      const coeSigUrl = branding.coe_signature_path ? signedMap.get(branding.coe_signature_path) : null
+      const principalSigUrl = branding.principal_signature_path
+        ? signedMap.get(branding.principal_signature_path)
+        : null
 
-    const pagesHtml = printable
-      .map((t) => {
-        const writtenCourses = t.courses.filter((c) => !c.is_online_exempt && c.eligibility_status === 'ELIGIBLE')
-        const onlineExempt = t.courses.filter((c) => c.is_online_exempt)
+      const pagesHtml = printable
+        .map((t) => {
+          const writtenCourses = t.courses.filter((c) => !c.is_online_exempt && c.eligibility_status === 'ELIGIBLE')
+          const onlineExempt = t.courses.filter((c) => c.is_online_exempt)
+          const photoSrc = t.student_photo_url ? signedMap.get(t.student_photo_url) ?? null : null
 
-        const rowsHtml = writtenCourses
-          .map(
-            (c, idx) => `<tr>
-              <td style="text-align:center">${idx + 1}</td>
-              <td><strong>${escapeHtml(c.course_code)}</strong>${c.is_omr_exam ? ' <span class="omr">OMR</span>' : ''}</td>
-              <td>${escapeHtml(c.course_title)}</td>
-              <td style="text-align:center">${escapeHtml(c.exam_date ?? 'TBD')}</td>
-              <td style="text-align:center">${c.session_code ? `${escapeHtml(c.session_code)} (${fmtTime(c.start_time)}–${fmtTime(c.end_time)})` : 'TBD'}</td>
-              <td style="text-align:center">${c.attempt_number}</td>
-              <td></td>
-            </tr>`
-          )
-          .join('')
+          const rowsHtml = writtenCourses
+            .map(
+              (c, idx) => `<tr>
+                <td style="text-align:center">${idx + 1}</td>
+                <td><strong>${escapeHtml(c.course_code)}</strong>${c.is_omr_exam ? ' <span class="omr">OMR</span>' : ''}</td>
+                <td>${escapeHtml(c.course_title)}</td>
+                <td style="text-align:center">${escapeHtml(c.exam_date ?? 'TBD')}</td>
+                <td style="text-align:center">${c.session_code ? `${escapeHtml(c.session_code)} (${fmtTime(c.start_time)}–${fmtTime(c.end_time)})` : 'TBD'}</td>
+                <td style="text-align:center">${c.attempt_number}</td>
+                <td></td>
+              </tr>`
+            )
+            .join('')
 
-        const photoBlock = t.student_photo_url
-          ? `<img src="${escapeHtml(t.student_photo_url)}" alt="Photo" style="width:100%;height:100%;object-fit:cover" />`
-          : `<div class="photo-placeholder">Affix Recent<br/>Passport Size<br/>Photograph</div>`
+          const photoBlock = photoSrc
+            ? `<img src="${escapeHtml(photoSrc)}" alt="Photo" style="width:100%;height:100%;object-fit:cover" />`
+            : `<div class="photo-placeholder">Affix Recent<br/>Passport Size<br/>Photograph</div>`
 
-        return `<section class="ticket-page">
-          <div class="border-box">
-            <div class="header">
-              ${instInfo?.logo_url ? `<img src="${escapeHtml(instInfo.logo_url)}" class="logo" alt="Logo" />` : ''}
-              <div class="header-text">
-                <h1>${escapeHtml(instTitle)}</h1>
-                ${affiliation ? `<p class="sub">${escapeHtml(affiliation)}</p>` : ''}
-                ${addr ? `<p class="addr">${escapeHtml(addr)}</p>` : ''}
-                <div class="badge">EXAMINATION HALL TICKET — ${escapeHtml(cycle.name)} (${escapeHtml(cycle.code)})</div>
+          return `<section class="page">
+            ${renderWatermarkHtml(branding, 'per-page')}
+            <div class="border-box doc-body">
+              ${renderBrandedHeaderHtml(branding, `EXAMINATION HALL TICKET — ${cycle.name} (${cycle.code})`)}
+
+              <div class="meta">
+                <span><strong>Hall Ticket No:</strong> ${escapeHtml(t.ticket_number)}</span>
+                <span><strong>Cycle Type:</strong> ${escapeHtml(t.registration_type)}</span>
+                <span><strong>Verify Code:</strong> ${escapeHtml(t.verification_code)}</span>
+              </div>
+
+              <div class="student-grid">
+                <table class="info-table">
+                  <tr><td class="lbl">USN / Reg. No.</td><td><strong>${escapeHtml(t.student_reg_no)}</strong></td></tr>
+                  <tr><td class="lbl">Candidate Name</td><td><strong>${escapeHtml(t.student_name)}</strong></td></tr>
+                  <tr><td class="lbl">Program / Branch</td><td>${escapeHtml(t.program_code)} — ${escapeHtml(t.program_name)}</td></tr>
+                  <tr><td class="lbl">Semester / Section</td><td>${escapeHtml(t.period_name ?? '—')}${t.section_name ? ` / Section ${escapeHtml(t.section_name)}` : ''}</td></tr>
+                </table>
+                <div class="photo-box">${photoBlock}</div>
+              </div>
+
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width:36px">Sl.</th>
+                    <th style="width:105px">Course Code</th>
+                    <th>Course Title</th>
+                    <th style="width:82px">Exam Date</th>
+                    <th style="width:128px">Session & Timing</th>
+                    <th style="width:48px">Att.</th>
+                    <th style="width:92px">Invigilator Sign</th>
+                  </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
+
+              ${
+                onlineExempt.length > 0
+                  ? `<p class="exempt-note"><strong>Note (ONLINE Courses Exempt from Written Seating):</strong> ${onlineExempt
+                      .map((c) => `${escapeHtml(c.course_code)} — ${escapeHtml(c.course_title)}`)
+                      .join('; ')}</p>`
+                  : ''
+              }
+
+              <div class="instructions">
+                <strong>Instructions to Candidates:</strong>
+                <ol>
+                  <li>Candidates must carry this Hall Ticket along with their valid College Identity Card to every examination session.</li>
+                  <li>Report to the examination hall at least 15 minutes before the scheduled start time.</li>
+                  <li>Mobile phones, smartwatches, and programmable devices are strictly prohibited inside the examination hall.</li>
+                  <li>Verify Course Code and Question Paper Version Code before answering.</li>
+                </ol>
+              </div>
+
+              <div class="signatures">
+                ${renderSignatureBlockHtml('Signature of Candidate', null)}
+                ${renderSignatureBlockHtml('Principal / Head of Institution', principalSigUrl)}
+                ${renderSignatureBlockHtml('Controller of Examinations (COE)', coeSigUrl)}
               </div>
             </div>
+          </section>`
+        })
+        .join('')
 
-            <div class="meta-bar">
-              <span><strong>Hall Ticket No:</strong> ${escapeHtml(t.ticket_number)}</span>
-              <span><strong>Cycle Type:</strong> ${escapeHtml(t.registration_type)}</span>
-              <span><strong>Verify Code:</strong> ${escapeHtml(t.verification_code)}</span>
-            </div>
-
-            <div class="student-grid">
-              <table class="info-table">
-                <tr><td class="lbl">USN / Reg. No.</td><td class="val"><strong>${escapeHtml(t.student_reg_no)}</strong></td></tr>
-                <tr><td class="lbl">Candidate Name</td><td class="val"><strong>${escapeHtml(t.student_name)}</strong></td></tr>
-                <tr><td class="lbl">Program / Branch</td><td class="val">${escapeHtml(t.program_code)} — ${escapeHtml(t.program_name)}</td></tr>
-                <tr><td class="lbl">Semester / Section</td><td class="val">${escapeHtml(t.period_name ?? '—')}${t.section_name ? ` / Section ${escapeHtml(t.section_name)}` : ''}</td></tr>
-              </table>
-              <div class="photo-box">${photoBlock}</div>
-            </div>
-
-            <table class="courses-table">
-              <thead>
-                <tr>
-                  <th style="width:36px">Sl.</th>
-                  <th style="width:105px">Course Code</th>
-                  <th>Course Title</th>
-                  <th style="width:82px">Exam Date</th>
-                  <th style="width:128px">Session & Timing</th>
-                  <th style="width:48px">Att.</th>
-                  <th style="width:92px">Invigilator Sign</th>
-                </tr>
-              </thead>
-              <tbody>${rowsHtml}</tbody>
-            </table>
-
-            ${
-              onlineExempt.length > 0
-                ? `<p class="exempt-note"><strong>Note (ONLINE Courses Exempt from Written Seating):</strong> ${onlineExempt
-                    .map((c) => `${escapeHtml(c.course_code)} — ${escapeHtml(c.course_title)}`)
-                    .join('; ')}</p>`
-                : ''
-            }
-
-            <div class="instructions">
-              <strong>Instructions to Candidates:</strong>
-              <ol>
-                <li>Candidates must carry this Hall Ticket along with their valid College Identity Card to every examination session.</li>
-                <li>Report to the examination hall at least 15 minutes before the scheduled start time.</li>
-                <li>Mobile phones, smartwatches, and programmable devices are strictly prohibited inside the examination hall.</li>
-                <li>Verify Course Code and Question Paper Version Code before answering.</li>
-              </ol>
-            </div>
-
-            <div class="signatures">
-              <div class="sig-col"><div class="sig-line"></div><span>Signature of Candidate</span></div>
-              <div class="sig-col"><div class="sig-line"></div><span>Principal / Head of Institution</span></div>
-              <div class="sig-col"><div class="sig-line"></div><span>Controller of Examinations (COE)</span></div>
-            </div>
-          </div>
-        </section>`
+      openBrandedPrintWindow({
+        title: `${cycle.code} — Hall Tickets (${printable.length})`,
+        landscape: false,
+        branding,
+        watermarkMode: 'per-page',
+        extraCss: `
+          .border-box { border: 1.5px solid #1e293b; padding: 14px; background: transparent; }
+          .student-grid { display: flex; gap: 12px; margin-bottom: 12px; align-items: stretch; }
+          .info-table { flex: 1; margin-bottom: 0; }
+          .info-table .lbl { width: 135px; background: #f1f5f9; font-weight: 600; color: #334155; }
+          .photo-box { width: 102px; height: 122px; border: 1px solid #64748b; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #fff; }
+          .photo-placeholder { text-align: center; font-size: 9.5px; color: #64748b; line-height: 1.4; }
+          .omr { display: inline-block; font-size: 9px; font-weight: 700; border: 1px solid #334155; padding: 0 3px; border-radius: 2px; margin-left: 3px; }
+          .exempt-note { font-size: 10px; color: #475569; background: #fffbeb; border: 1px solid #fde68a; padding: 5px 8px; margin: 6px 0 10px; }
+          .instructions { border-top: 1px dashed #94a3b8; padding-top: 8px; font-size: 10px; color: #334155; }
+          .instructions ol { margin: 4px 0 0 16px; padding: 0; line-height: 1.45; }
+        `,
+        bodyHtml: pagesHtml,
       })
-      .join('')
 
-    win.document.write(`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>${escapeHtml(cycle.code)} — Hall Tickets (${printable.length})</title>
-  <style>
-    @page { size: A4 portrait; margin: 10mm; }
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; color: #111; margin: 0; font-size: 11px; }
-    .ticket-page { page-break-after: always; padding: 2mm 0; }
-    .ticket-page:last-child { page-break-after: auto; }
-    .border-box { border: 1.5px solid #1e293b; padding: 14px; }
-    .header { display: flex; align-items: center; gap: 12px; border-bottom: 1.5px solid #1e293b; padding-bottom: 10px; }
-    .logo { width: 58px; height: 58px; object-fit: contain; }
-    .header-text { flex: 1; text-align: center; }
-    .header-text h1 { margin: 0; font-size: 15px; text-transform: uppercase; letter-spacing: 0.3px; }
-    .header-text .sub { margin: 2px 0 0; font-size: 10.5px; color: #334155; }
-    .header-text .addr { margin: 2px 0 0; font-size: 10px; color: #475569; }
-    .badge { display: inline-block; margin-top: 6px; padding: 3px 10px; background: #1e293b; color: #fff; font-weight: 700; font-size: 11px; border-radius: 3px; }
-    .meta-bar { display: flex; justify-content: space-between; background: #f8fafc; border: 1px solid #cbd5e1; padding: 5px 10px; margin: 10px 0; font-size: 10.5px; }
-    .student-grid { display: flex; gap: 12px; margin-bottom: 12px; align-items: stretch; }
-    .info-table { flex: 1; border-collapse: collapse; }
-    .info-table td { border: 1px solid #94a3b8; padding: 5px 8px; }
-    .info-table .lbl { width: 135px; background: #f1f5f9; font-weight: 600; color: #334155; }
-    .photo-box { width: 102px; height: 122px; border: 1px solid #64748b; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-    .photo-placeholder { text-align: center; font-size: 9.5px; color: #64748b; line-height: 1.4; }
-    .courses-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-    .courses-table th, .courses-table td { border: 1px solid #475569; padding: 5px 6px; }
-    .courses-table th { background: #f1f5f9; font-size: 10.5px; }
-    .omr { display: inline-block; font-size: 9px; font-weight: 700; border: 1px solid #334155; padding: 0 3px; border-radius: 2px; margin-left: 3px; }
-    .exempt-note { font-size: 10px; color: #475569; background: #fffbeb; border: 1px solid #fde68a; padding: 5px 8px; margin: 6px 0 10px; }
-    .instructions { border-top: 1px dashed #94a3b8; padding-top: 8px; font-size: 10px; color: #334155; }
-    .instructions ol { margin: 4px 0 0 16px; padding: 0; line-height: 1.45; }
-    .signatures { display: flex; justify-content: space-between; gap: 20px; margin-top: 46px; text-align: center; font-size: 10.5px; font-weight: 600; }
-    .sig-col { flex: 1; }
-    .sig-line { border-top: 1px solid #334155; margin-bottom: 4px; }
-  </style>
-</head>
-<body>
-  ${pagesHtml}
-  <script>window.onload = function(){ window.print(); };</script>
-</body>
-</html>`)
-    win.document.close()
-
-    if (canPrint) {
-      await supabase.rpc('record_hall_ticket_prints', {
-        p_institution_id: institutionId,
-        p_ticket_ids: printable.map((t) => t.id),
-      })
-      queryClient.invalidateQueries({ queryKey: ['exam_hall_tickets', institutionId, cycle.id] })
+      if (canPrint) {
+        await supabase.rpc('record_hall_ticket_prints', {
+          p_institution_id: institutionId,
+          p_ticket_ids: printable.map((t) => t.id),
+        })
+        queryClient.invalidateQueries({ queryKey: ['exam_hall_tickets', institutionId, cycle.id] })
+      }
+    } finally {
+      setIsPrinting(false)
     }
   }
 
@@ -481,7 +436,8 @@ export function HallTicketsTab({ institutionId, cycle, canIssue, canPrint }: Pro
         <div>
           <h2 className="text-base font-semibold text-slate-900">Hall Tickets — {cycle.code}</h2>
           <p className="text-xs text-slate-500">
-            Issue hall tickets in bulk for COE-approved registrations and print individual or batch A4 PDFs.
+            Bulk-issue hall tickets and print A4 PDFs with tenant top-left/top-right logos, watermark, signed student
+            photos, and COE/Principal signatures.
           </p>
         </div>
 
@@ -510,12 +466,14 @@ export function HallTicketsTab({ institutionId, cycle, canIssue, canPrint }: Pro
           )}
           <button
             type="button"
-            disabled={selectedBatch.length === 0}
+            disabled={selectedBatch.length === 0 || isPrinting}
             onClick={() => printHallTickets(selectedBatch)}
             className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
           >
             <Printer className="h-3.5 w-3.5" />
-            Print {selectedIds.length > 0 ? `Selected (${selectedBatch.length})` : `All Issued (${selectedBatch.length})`}
+            {isPrinting
+              ? 'Signing Assets...'
+              : `Print ${selectedIds.length > 0 ? `Selected (${selectedBatch.length})` : `All Issued (${selectedBatch.length})`}`}
           </button>
         </div>
       </div>
@@ -656,7 +614,8 @@ export function HallTicketsTab({ institutionId, cycle, canIssue, canPrint }: Pro
                         {t.status === 'ISSUED' && (
                           <button
                             type="button"
-                            title="Print A4 Hall Ticket"
+                            disabled={isPrinting}
+                            title="Print Branded A4 Hall Ticket"
                             onClick={() => printHallTickets([t])}
                             className="p-1.5 rounded text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
                           >

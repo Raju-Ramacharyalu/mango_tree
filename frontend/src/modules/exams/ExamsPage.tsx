@@ -14,6 +14,7 @@ import { RoomAllotmentsTab } from './RoomAllotmentsTab'
 import { ExamDayFormsTab } from './ExamDayFormsTab'
 import { BundlesDecodingTab } from './BundlesDecodingTab'
 import { ResultsProcessingTab } from './ResultsProcessingTab'
+import { BrandingAssetsTab } from './BrandingAssetsTab'
 import { cn } from '@/utils/cn'
 
 type ExamTab =
@@ -27,6 +28,7 @@ type ExamTab =
   | 'forms-qpds'
   | 'bundles'
   | 'results'
+  | 'branding'
 
 export function ExamsPage() {
   const [activeTab, setActiveTab] = useState<ExamTab>('cycles')
@@ -206,6 +208,7 @@ export function ExamsPage() {
             { id: 'forms-qpds', label: 'A/B Forms & QPDS' },
             { id: 'bundles', label: 'Bundles & Decoding' },
             { id: 'results', label: 'Marks & Results' },
+            { id: 'branding', label: 'Branding & Photos' },
           ] as const
         ).map((tab) => (
           <button
@@ -292,6 +295,13 @@ export function ExamsPage() {
           cycle={activeCycle}
           canEnterCie={canManageRegistrations}
           canPublish={canManageCycles}
+        />
+      )}
+      {activeTab === 'branding' && (
+        <BrandingAssetsTab
+          institutionId={activeInstitutionId}
+          canManageBranding={canManageCycles}
+          canManagePhotos={canManageRegistrations}
         />
       )}
     </div>
