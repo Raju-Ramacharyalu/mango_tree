@@ -10,9 +10,19 @@ import { RegistrationsTab } from './RegistrationsTab'
 import { TimetableTab } from './TimetableTab'
 import { AppearingListsTab } from './AppearingListsTab'
 import { HallTicketsTab } from './HallTicketsTab'
+import { RoomAllotmentsTab } from './RoomAllotmentsTab'
+import { ExamDayFormsTab } from './ExamDayFormsTab'
 import { cn } from '@/utils/cn'
 
-type ExamTab = 'cycles' | 'fees' | 'registrations' | 'timetable' | 'appearing' | 'hall-tickets'
+type ExamTab =
+  | 'cycles'
+  | 'fees'
+  | 'registrations'
+  | 'timetable'
+  | 'appearing'
+  | 'hall-tickets'
+  | 'allotments'
+  | 'forms-qpds'
 
 export function ExamsPage() {
   const [activeTab, setActiveTab] = useState<ExamTab>('cycles')
@@ -87,8 +97,8 @@ export function ExamsPage() {
         <ClipboardList className="h-8 w-8 text-indigo-500 mx-auto" />
         <h1 className="text-lg font-semibold text-slate-900">Select an Institution Workspace</h1>
         <p className="text-sm text-slate-500">
-          Switch to <strong>Institution</strong> mode in the left sidebar to manage Examination Cycles, Fee Rules,
-          Registrations, Appearing Lists, and Hall Tickets.
+          Switch to <strong>Institution</strong> mode in the left sidebar to manage Examination Cycles, Registrations,
+          Hall Tickets, Room Allotments, and Exam-Day Forms.
         </p>
       </div>
     )
@@ -100,7 +110,8 @@ export function ExamsPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">Examinations & Operations</h1>
           <p className="text-sm text-slate-500">
-            Exam cycles, fee schedules, registrations, timetable, appearing lists, and A4 hall ticket issuance.
+            Exam cycles, fee schedules, registrations, timetable, appearing lists, hall tickets, room allotments, and
+            A/B Forms & QPDS.
           </p>
         </div>
 
@@ -178,7 +189,7 @@ export function ExamsPage() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-slate-200 flex gap-6 text-sm overflow-x-auto">
+      <div className="border-b border-slate-200 flex gap-5 text-sm overflow-x-auto">
         {(
           [
             { id: 'cycles', label: 'Exam Cycles' },
@@ -187,6 +198,8 @@ export function ExamsPage() {
             { id: 'timetable', label: 'Timetable' },
             { id: 'appearing', label: 'Appearing Lists' },
             { id: 'hall-tickets', label: 'Hall Tickets' },
+            { id: 'allotments', label: 'Room Allotments' },
+            { id: 'forms-qpds', label: 'A/B Forms & QPDS' },
           ] as const
         ).map((tab) => (
           <button
@@ -240,6 +253,22 @@ export function ExamsPage() {
           cycle={activeCycle}
           canIssue={canManageCycles}
           canPrint={canManageRegistrations}
+        />
+      )}
+      {activeTab === 'allotments' && (
+        <RoomAllotmentsTab
+          institutionId={activeInstitutionId}
+          cycle={activeCycle}
+          canManage={canManageRegistrations}
+          canDelete={canManageCycles}
+        />
+      )}
+      {activeTab === 'forms-qpds' && (
+        <ExamDayFormsTab
+          institutionId={activeInstitutionId}
+          institutionName={activeMembership?.institution.name ?? 'Institution'}
+          cycle={activeCycle}
+          canManage={canManageRegistrations}
         />
       )}
     </div>

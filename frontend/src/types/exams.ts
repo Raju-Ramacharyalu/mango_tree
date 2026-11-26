@@ -201,3 +201,81 @@ export interface HallTicketItem {
   payment_status: PaymentStatus
   courses: HallTicketCourseLine[]
 }
+
+export type AllotmentRunStatus = 'DRAFT' | 'PUBLISHED' | 'LOCKED'
+
+export type AttendanceStatus = 'PRESENT' | 'ABSENT' | 'MALPRACTICE' | 'EXEMPT'
+
+export interface ExamRoom {
+  id: string
+  institution_id: string
+  campus_id: string | null
+  room_number: string
+  room_name: string | null
+  block_name: string | null
+  floor_label: string | null
+  capacity: number
+  rows_count: number
+  columns_count: number
+  sort_order: number
+  remarks: string | null
+  is_active: boolean
+}
+
+export interface ExamCourseAlias {
+  id: string
+  institution_id: string
+  source_course_code: string
+  canonical_course_code: string
+  remarks: string | null
+  is_active: boolean
+}
+
+export interface ExamRoomAllotmentRun {
+  id: string
+  institution_id: string
+  exam_cycle_id: string
+  exam_date: string
+  session_code: ExamSessionCode
+  status: AllotmentRunStatus
+  small_branch_threshold: number
+  interleave_descriptive: boolean
+  omr_sequential: boolean
+  total_students: number
+  total_rooms_used: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ExamSeatAllotmentItem {
+  id: string
+  institution_id: string
+  exam_cycle_id: string
+  allotment_run_id: string
+  room_id: string
+  room_number: string
+  room_name: string | null
+  block_name: string | null
+  floor_label: string | null
+  room_remarks: string | null
+  exam_date: string
+  session_code: ExamSessionCode
+  seat_number: number
+  seat_label: string
+  student_id: string
+  student_reg_no: string
+  student_name: string
+  registration_id: string
+  registration_course_id: string
+  course_id: string
+  course_code: string
+  course_title: string
+  effective_course_code: string
+  program_id: string
+  program_code: string
+  program_name: string
+  is_omr_exam: boolean
+  attendance_status: AttendanceStatus
+  booklet_number: string | null
+  remarks: string | null
+}
