@@ -10,6 +10,7 @@ import { InstitutionsPage } from '@/modules/institutions/InstitutionsPage'
 import { OrganizationsPage } from '@/modules/organizations/OrganizationsPage'
 import { UsersPage } from '@/modules/users/UsersPage'
 import { AcademicsPage } from '@/modules/academics/AcademicsPage'
+import { ExamsPage } from '@/modules/exams/ExamsPage'
 import { ConfigurationPage } from '@/modules/configuration/ConfigurationPage'
 import { DataManagementPage } from '@/modules/migrations/DataManagementPage'
 import { AuditLogsPage } from '@/modules/audit/AuditLogsPage'
@@ -55,6 +56,7 @@ function AppRoutes() {
         <Route path="/organizations" element={<OrganizationsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/academics" element={<AcademicsPage />} />
+        <Route path="/exams" element={<ExamsPage />} />
         <Route path="/configuration" element={<ConfigurationPage />} />
         <Route path="/data-management" element={<DataManagementPage />} />
         <Route path="/audit-logs" element={<AuditLogsPage />} />

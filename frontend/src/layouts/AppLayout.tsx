@@ -1,11 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import {
   LayoutDashboard,
   Building2,
   Network,
   Users,
   GraduationCap,
+  ClipboardList,
   Sliders,
   Database,
   ShieldCheck,
@@ -13,8 +15,11 @@ import {
   Menu,
   X,
   Globe,
+  Calendar,
 } from 'lucide-react'
+import { supabase } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
+import type { ExamCycle } from '@/types/exams'
 import { cn } from '@/utils/cn'
 
 const navItems = [
@@ -23,6 +28,7 @@ const navItems = [
   { to: '/organizations', label: 'Organizations', icon: Network, platformOnly: true },
   { to: '/users', label: 'Users and Access', icon: Users, platformOnly: false },
   { to: '/academics', label: 'Academics', icon: GraduationCap, platformOnly: false },
+  { to: '/exams', label: 'Examinations', icon: ClipboardList, platformOnly: false },
   { to: '/configuration', label: 'Configuration', icon: Sliders, platformOnly: false },
   { to: '/data-management', label: 'Data Management', icon: Database, platformOnly: false },
   { to: '/audit-logs', label: 'Audit Logs', icon: ShieldCheck, platformOnly: false },
@@ -36,13 +42,45 @@ export function AppLayout() {
     memberships,
     context,
     activeInstitutionId,
+    activeExamCycleId,
     setContext,
     setActiveInstitution,
+    setActiveExamCycle,
     signOut,
   } = useAppStore()
 
+  const { data: examCycles = [] } = useQuery<ExamCycle[]>({
+    queryKey: ['exam_cycles', activeInstitutionId],
+    enabled: context === 'INSTITUTION' && Boolean(activeInstitutionId),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('exam_cycles')
+        .select('*')
+        .eq('institution_id', activeInstitutionId!)
+        .is('deleted_at', null)
+        .order('is_default_active', { ascending: false })
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      return (data ?? []) as ExamCycle[]
+    },
+  })
+
+  useEffect(() => {
+    if (context !== 'INSTITUTION' || !activeInstitutionId) return
+    if (examCycles.length === 0) {
+      if (activeExamCycleId !== null) setActiveExamCycle(null)
+      return
+    }
+    const stillValid = examCycles.some((c) => c.id === activeExamCycleId)
+    if (!stillValid) {
+      const preferred = examCycles.find((c) => c.is_default_active) ?? examCycles[0]
+      setActiveExamCycle(preferred.id)
+    }
+  }, [context, activeInstitutionId, examCycles, activeExamCycleId, setActiveExamCycle])
+
   const hasPlatformAccess = platformRoles.length > 0
   const activeMembership = memberships.find((m) => m.institution_id === activeInstitutionId)
+  const activeCycle = examCycles.find((c) => c.id === activeExamCycleId) ?? null
   const visibleNav = navItems.filter((item) => !item.platformOnly || (hasPlatformAccess && context === 'PLATFORM'))
 
   return (
@@ -112,6 +150,27 @@ export function AppLayout() {
               ))}
             </select>
           )}
+
+          {context === 'INSTITUTION' && examCycles.length > 0 && (
+            <div className="pt-1">
+              <label className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-400 mb-1 px-0.5">
+                <Calendar className="h-3 w-3" />
+                Active Exam Cycle
+              </label>
+              <select
+                value={activeExamCycleId ?? ''}
+                onChange={(e) => setActiveExamCycle(e.target.value || null)}
+                className="w-full rounded-md bg-slate-800 border border-slate-700 px-2.5 py-1.5 text-xs text-indigo-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                {examCycles.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.is_default_active ? '★ ' : ''}
+                    {c.code} ({c.cycle_type})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
@@ -153,8 +212,8 @@ export function AppLayout() {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-white border-b border-slate-200 px-4 lg:px-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <header className="h-16 bg-white border-b border-slate-200 px-4 lg:px-6 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
               className="lg:hidden p-2 rounded-md text-slate-600 hover:bg-slate-100"
@@ -162,8 +221,8 @@ export function AppLayout() {
             >
               <Menu className="h-5 w-5" />
             </button>
-            <div className="flex items-center gap-2 text-sm">
-              <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-medium text-xs">
+            <div className="flex items-center gap-2 text-sm min-w-0">
+              <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-medium text-xs shrink-0">
                 {context === 'PLATFORM' ? 'Platform Administration' : 'Institution Administration'}
               </span>
               {context === 'INSTITUTION' && activeMembership && (
@@ -171,10 +230,16 @@ export function AppLayout() {
                   {activeMembership.institution.name}
                 </span>
               )}
+              {context === 'INSTITUTION' && activeCycle && (
+                <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium shrink-0">
+                  <Calendar className="h-3 w-3" />
+                  {activeCycle.code} · {activeCycle.status.replace('_', ' ')}
+                </span>
+              )}
             </div>
           </div>
 
-          <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500">
+          <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 shrink-0">
             {context === 'PLATFORM' ? platformRoles.join(', ') : activeMembership?.roles.join(', ')}
           </div>
         </header>

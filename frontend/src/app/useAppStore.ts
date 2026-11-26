@@ -24,11 +24,13 @@ interface AppState {
   memberships: UserMembership[]
   context: WorkspaceContext
   activeInstitutionId: string | null
+  activeExamCycleId: string | null
   isLoadingAuth: boolean
   error: string | null
   initializeSession: (session: Session | null) => Promise<void>
   setContext: (ctx: WorkspaceContext) => void
   setActiveInstitution: (institutionId: string) => void
+  setActiveExamCycle: (cycleId: string | null) => void
   signOut: () => Promise<void>
 }
 
@@ -39,6 +41,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   memberships: [],
   context: 'INSTITUTION',
   activeInstitutionId: null,
+  activeExamCycleId: null,
   isLoadingAuth: true,
   error: null,
 
@@ -50,6 +53,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         platformRoles: [],
         memberships: [],
         activeInstitutionId: null,
+        activeExamCycleId: null,
         context: 'INSTITUTION',
         isLoadingAuth: false,
         error: null,
@@ -149,7 +153,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   setActiveInstitution: (institutionId) => {
     const valid = get().memberships.some((m) => m.institution_id === institutionId)
     if (!valid) return
-    set({ activeInstitutionId: institutionId, context: 'INSTITUTION' })
+    set({ activeInstitutionId: institutionId, activeExamCycleId: null, context: 'INSTITUTION' })
+  },
+
+  setActiveExamCycle: (cycleId) => {
+    set({ activeExamCycleId: cycleId })
   },
 
   signOut: async () => {
@@ -160,6 +168,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       platformRoles: [],
       memberships: [],
       activeInstitutionId: null,
+      activeExamCycleId: null,
       context: 'INSTITUTION',
     })
   },
