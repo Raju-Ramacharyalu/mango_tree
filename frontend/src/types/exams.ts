@@ -279,3 +279,138 @@ export interface ExamSeatAllotmentItem {
   booklet_number: string | null
   remarks: string | null
 }
+
+export type BundleStatus = 'CREATED' | 'DISPATCHED' | 'EVALUATED' | 'DECODED' | 'LOCKED'
+
+export type ScriptEvalStatus = 'PENDING' | 'ENTERED' | 'VERIFIED' | 'DECODED'
+
+export type CourseResultStatus = 'PENDING' | 'PASS' | 'FAIL' | 'ABSENT' | 'MALPRACTICE' | 'EXEMPT' | 'WITHHELD'
+
+export type SemesterResultStatus = 'PENDING' | 'PASS' | 'FAIL' | 'WITHHELD'
+
+export interface ExamScriptBundle {
+  id: string
+  institution_id: string
+  exam_cycle_id: string
+  course_id: string
+  effective_course_code: string
+  course_title: string
+  program_id: string
+  program_code: string
+  program_level: ProgramLevel
+  usn_series_prefix: string | null
+  bundle_code: string
+  bundle_sequence: number
+  max_bundle_size: number
+  script_count: number
+  see_max_marks: number
+  see_scale_to: number
+  evaluator_staff_id: string | null
+  evaluator_name: string | null
+  status: BundleStatus
+  dispatched_at: string | null
+  evaluated_at: string | null
+  decoded_at: string | null
+  remarks: string | null
+  created_at: string
+}
+
+export interface ExamBundleScriptItem {
+  id: string
+  bundle_id: string
+  seat_allotment_id: string | null
+  registration_id: string
+  registration_course_id: string
+  student_id: string
+  student_reg_no: string
+  student_name: string
+  course_id: string
+  program_id: string
+  script_sequence: number
+  dummy_code: string
+  booklet_number: string | null
+  see_marks_raw: number | null
+  see_marks_scaled: number | null
+  is_absent: boolean
+  is_malpractice: boolean
+  evaluation_status: ScriptEvalStatus
+  evaluator_remarks: string | null
+}
+
+export interface ExamCourseResultItem {
+  id: string
+  institution_id: string
+  exam_cycle_id: string
+  registration_id: string
+  registration_course_id: string
+  student_id: string
+  student_reg_no: string
+  student_name: string
+  course_id: string
+  course_code: string
+  course_title: string
+  effective_course_code: string
+  program_id: string
+  program_code: string
+  program_level: ProgramLevel
+  period_name: string | null
+  credits: number
+  is_online_exempt: boolean
+  cie_marks: number | null
+  cie_max_marks: number
+  see_marks: number | null
+  see_max_marks: number
+  total_marks: number | null
+  max_total_marks: number
+  percentage: number | null
+  grade_code: string | null
+  grade_point: number | null
+  result_status: CourseResultStatus
+  source_bundle_id: string | null
+  is_published: boolean
+  remarks: string | null
+}
+
+export interface ExamSemesterResultItem {
+  id: string
+  institution_id: string
+  exam_cycle_id: string
+  registration_id: string
+  student_id: string
+  student_reg_no: string
+  student_name: string
+  program_id: string
+  program_code: string
+  program_name: string
+  program_level: ProgramLevel
+  academic_period_id: string | null
+  period_name: string | null
+  total_courses: number
+  passed_courses: number
+  failed_courses: number
+  credits_registered: number
+  credits_earned: number
+  total_grade_points: number
+  sgpa: number
+  overall_status: SemesterResultStatus
+  is_published: boolean
+  published_at: string | null
+}
+
+export interface GradeScaleItemRow {
+  grade_code: string
+  description: string
+  grade_point: number
+  min_percentage: number | null
+  max_percentage: number | null
+  is_pass: boolean
+  sort_order: number
+}
+
+export interface EvaluatorStaffOption {
+  id: string
+  employee_code: string
+  full_name: string
+  department_label: string | null
+  is_evaluator: boolean
+}

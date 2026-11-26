@@ -12,6 +12,8 @@ import { AppearingListsTab } from './AppearingListsTab'
 import { HallTicketsTab } from './HallTicketsTab'
 import { RoomAllotmentsTab } from './RoomAllotmentsTab'
 import { ExamDayFormsTab } from './ExamDayFormsTab'
+import { BundlesDecodingTab } from './BundlesDecodingTab'
+import { ResultsProcessingTab } from './ResultsProcessingTab'
 import { cn } from '@/utils/cn'
 
 type ExamTab =
@@ -23,6 +25,8 @@ type ExamTab =
   | 'hall-tickets'
   | 'allotments'
   | 'forms-qpds'
+  | 'bundles'
+  | 'results'
 
 export function ExamsPage() {
   const [activeTab, setActiveTab] = useState<ExamTab>('cycles')
@@ -98,7 +102,7 @@ export function ExamsPage() {
         <h1 className="text-lg font-semibold text-slate-900">Select an Institution Workspace</h1>
         <p className="text-sm text-slate-500">
           Switch to <strong>Institution</strong> mode in the left sidebar to manage Examination Cycles, Registrations,
-          Hall Tickets, Room Allotments, and Exam-Day Forms.
+          Hall Tickets, Room Allotments, Bundle Decoding, and Results.
         </p>
       </div>
     )
@@ -110,8 +114,8 @@ export function ExamsPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">Examinations & Operations</h1>
           <p className="text-sm text-slate-500">
-            Exam cycles, fee schedules, registrations, timetable, appearing lists, hall tickets, room allotments, and
-            A/B Forms & QPDS.
+            End-to-end autonomous examination lifecycle — cycles, registrations, hall tickets, seating, bundles, and
+            result publication.
           </p>
         </div>
 
@@ -200,6 +204,8 @@ export function ExamsPage() {
             { id: 'hall-tickets', label: 'Hall Tickets' },
             { id: 'allotments', label: 'Room Allotments' },
             { id: 'forms-qpds', label: 'A/B Forms & QPDS' },
+            { id: 'bundles', label: 'Bundles & Decoding' },
+            { id: 'results', label: 'Marks & Results' },
           ] as const
         ).map((tab) => (
           <button
@@ -269,6 +275,23 @@ export function ExamsPage() {
           institutionName={activeMembership?.institution.name ?? 'Institution'}
           cycle={activeCycle}
           canManage={canManageRegistrations}
+        />
+      )}
+      {activeTab === 'bundles' && (
+        <BundlesDecodingTab
+          institutionId={activeInstitutionId}
+          institutionName={activeMembership?.institution.name ?? 'Institution'}
+          cycle={activeCycle}
+          canDecode={canManageCycles}
+        />
+      )}
+      {activeTab === 'results' && (
+        <ResultsProcessingTab
+          institutionId={activeInstitutionId}
+          institutionName={activeMembership?.institution.name ?? 'Institution'}
+          cycle={activeCycle}
+          canEnterCie={canManageRegistrations}
+          canPublish={canManageCycles}
         />
       )}
     </div>
