@@ -111,3 +111,93 @@ export interface ExamRegistrationItem {
   period_name: string | null
   courses: ExamRegistrationCourseItem[]
 }
+
+export type ExamSessionCode = 'FN' | 'AN' | 'CUSTOM'
+
+export type HallTicketStatus = 'ISSUED' | 'WITHHELD' | 'REVOKED'
+
+export interface ExamTimetableSlot {
+  id: string
+  institution_id: string
+  exam_cycle_id: string
+  course_id: string
+  exam_date: string
+  session_code: ExamSessionCode
+  start_time: string
+  end_time: string
+  duration_hours: number
+  is_omr_exam: boolean
+  qp_code: string | null
+  remarks: string | null
+  course_code: string
+  course_title: string
+}
+
+export interface AppearingRow {
+  reg_course_id: string
+  registration_id: string
+  registration_status: RegistrationStatus
+  payment_status: PaymentStatus
+  student_id: string
+  student_reg_no: string
+  student_name: string
+  program_id: string
+  program_code: string
+  program_name: string
+  period_id: string | null
+  period_name: string | null
+  section_name: string | null
+  course_id: string
+  course_code: string
+  course_title: string
+  attempt_number: number
+  registration_category: RegistrationCourseCategory
+  is_online_exempt: boolean
+  eligibility_status: EligibilityStatus
+  exam_date: string | null
+  session_code: ExamSessionCode | null
+  start_time: string | null
+  end_time: string | null
+  is_omr_exam: boolean
+}
+
+export interface HallTicketCourseLine {
+  course_code: string
+  course_title: string
+  attempt_number: number
+  registration_category: RegistrationCourseCategory
+  is_online_exempt: boolean
+  eligibility_status: EligibilityStatus
+  exam_date: string | null
+  session_code: ExamSessionCode | null
+  start_time: string | null
+  end_time: string | null
+  is_omr_exam: boolean
+}
+
+export interface HallTicketItem {
+  id: string
+  institution_id: string
+  exam_cycle_id: string
+  registration_id: string
+  student_id: string
+  ticket_number: string
+  verification_code: string
+  status: HallTicketStatus
+  withheld_reason: string | null
+  eligible_course_count: number
+  print_count: number
+  last_printed_at: string | null
+  issued_at: string
+  student_reg_no: string
+  student_name: string
+  student_photo_url: string | null
+  program_id: string
+  program_code: string
+  program_name: string
+  period_name: string | null
+  section_name: string | null
+  registration_type: ExamCycleType
+  payment_status: PaymentStatus
+  courses: HallTicketCourseLine[]
+}
