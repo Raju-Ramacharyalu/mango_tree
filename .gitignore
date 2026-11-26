@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+.DS_Store
+*.log
+*.zip
+scripts/legacy_export/
+scripts/data_transform/output/
