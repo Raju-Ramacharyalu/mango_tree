@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Calendar, Receipt, Users, CheckCircle2, ClipboardList, Ticket } from 'lucide-react'
 import { supabase } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
+import { resolveUserAccess, type ExamTabId } from '@/app/rbac'
 import type { ExamCycle } from '@/types/exams'
 import { ExamCyclesTab } from './ExamCyclesTab'
 import { FeeRulesTab } from './FeeRulesTab'
@@ -17,34 +18,49 @@ import { ResultsProcessingTab } from './ResultsProcessingTab'
 import { BrandingAssetsTab } from './BrandingAssetsTab'
 import { cn } from '@/utils/cn'
 
-type ExamTab =
-  | 'cycles'
-  | 'fees'
-  | 'registrations'
-  | 'timetable'
-  | 'appearing'
-  | 'hall-tickets'
-  | 'allotments'
-  | 'forms-qpds'
-  | 'bundles'
-  | 'results'
-  | 'branding'
+const EXAM_TAB_DEFS: Array<{ id: ExamTabId; label: string }> = [
+  { id: 'cycles', label: 'Exam Cycles' },
+  { id: 'fees', label: 'Fee Rules' },
+  { id: 'registrations', label: 'Registrations' },
+  { id: 'timetable', label: 'Timetable' },
+  { id: 'appearing', label: 'Appearing Lists' },
+  { id: 'hall-tickets', label: 'Hall Tickets' },
+  { id: 'allotments', label: 'Room Allotments' },
+  { id: 'forms-qpds', label: 'A/B Forms & QPDS' },
+  { id: 'bundles', label: 'Bundles & Decoding' },
+  { id: 'results', label: 'Marks & Results' },
+  { id: 'branding', label: 'Branding & Photos' },
+]
 
 export function ExamsPage() {
-  const [activeTab, setActiveTab] = useState<ExamTab>('cycles')
-  const { context, activeInstitutionId, activeExamCycleId, setActiveExamCycle, platformRoles, memberships } =
-    useAppStore()
+  const [activeTab, setActiveTab] = useState<ExamTabId>('cycles')
+  const {
+    context,
+    activeInstitutionId,
+    activeExamCycleId,
+    setActiveExamCycle,
+    platformRoles,
+    memberships,
+    previewTier,
+  } = useAppStore()
 
   const activeMembership = memberships.find((m) => m.institution_id === activeInstitutionId)
-  const instRoles = activeMembership?.roles ?? []
+  const access = resolveUserAccess({ platformRoles, activeMembership, context, previewTier })
 
-  const isPlatformAdmin = platformRoles.some((r) => r === 'SUPER_ADMIN' || r === 'PLATFORM_ADMIN')
-  const isInstAdmin = instRoles.some(
-    (r) => r === 'INSTITUTION_ADMIN' || r === 'PRINCIPAL_DIRECTOR' || r === 'EXAM_CONTROLLER'
-  )
-  const canManageCycles = isPlatformAdmin || isInstAdmin
-  const canManageRegistrations =
-    canManageCycles || instRoles.some((r) => r === 'ACADEMIC_ADMIN' || r === 'DEPT_ADMIN')
+  const visibleTabs = EXAM_TAB_DEFS.filter((t) => access.allowedExamTabs.includes(t.id))
+  const {
+    canManageCycles,
+    canManageRegistrations,
+    canManageBranding,
+    canDecodeBundles,
+    canPublishResults,
+  } = access.examCapabilities
+
+  useEffect(() => {
+    if (visibleTabs.length > 0 && !visibleTabs.some((t) => t.id === activeTab)) {
+      setActiveTab(visibleTabs[0].id)
+    }
+  }, [visibleTabs, activeTab])
 
   const { data: cycles = [] } = useQuery<ExamCycle[]>({
     queryKey: ['exam_cycles', activeInstitutionId],
@@ -114,10 +130,9 @@ export function ExamsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Examinations & Operations</h1>
+          <h1 className="text-xl font-bold text-slate-900">Examinations &amp; Operations</h1>
           <p className="text-sm text-slate-500">
-            End-to-end autonomous examination lifecycle — cycles, registrations, hall tickets, seating, bundles, and
-            result publication.
+            Role-scoped autonomous examination workspace ({access.scopeBadge}).
           </p>
         </div>
 
@@ -140,7 +155,6 @@ export function ExamsPage() {
         )}
       </div>
 
-      {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <div className="flex items-center justify-between text-xs text-slate-500">
@@ -194,23 +208,8 @@ export function ExamsPage() {
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="border-b border-slate-200 flex gap-5 text-sm overflow-x-auto">
-        {(
-          [
-            { id: 'cycles', label: 'Exam Cycles' },
-            { id: 'fees', label: 'Fee Rules' },
-            { id: 'registrations', label: 'Registrations' },
-            { id: 'timetable', label: 'Timetable' },
-            { id: 'appearing', label: 'Appearing Lists' },
-            { id: 'hall-tickets', label: 'Hall Tickets' },
-            { id: 'allotments', label: 'Room Allotments' },
-            { id: 'forms-qpds', label: 'A/B Forms & QPDS' },
-            { id: 'bundles', label: 'Bundles & Decoding' },
-            { id: 'results', label: 'Marks & Results' },
-            { id: 'branding', label: 'Branding & Photos' },
-          ] as const
-        ).map((tab) => (
+        {visibleTabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
@@ -285,7 +284,7 @@ export function ExamsPage() {
           institutionId={activeInstitutionId}
           institutionName={activeMembership?.institution.name ?? 'Institution'}
           cycle={activeCycle}
-          canDecode={canManageCycles}
+          canDecode={canDecodeBundles}
         />
       )}
       {activeTab === 'results' && (
@@ -294,13 +293,13 @@ export function ExamsPage() {
           institutionName={activeMembership?.institution.name ?? 'Institution'}
           cycle={activeCycle}
           canEnterCie={canManageRegistrations}
-          canPublish={canManageCycles}
+          canPublish={canPublishResults}
         />
       )}
       {activeTab === 'branding' && (
         <BrandingAssetsTab
           institutionId={activeInstitutionId}
-          canManageBranding={canManageCycles}
+          canManageBranding={canManageBranding}
           canManagePhotos={canManageRegistrations}
         />
       )}

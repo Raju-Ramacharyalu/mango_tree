@@ -16,23 +16,35 @@ import {
   X,
   Globe,
   Calendar,
+  Eye,
+  Store,
 } from 'lucide-react'
 import { supabase } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
+import { resolveUserAccess, TIER_LABELS } from '@/app/rbac'
+import type { AdminPreviewTier } from '@/types/auth'
 import type { ExamCycle } from '@/types/exams'
 import { cn } from '@/utils/cn'
 
 const navItems = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard, platformOnly: false },
-  { to: '/institutions', label: 'Institutions', icon: Building2, platformOnly: false },
-  { to: '/organizations', label: 'Organizations', icon: Network, platformOnly: true },
-  { to: '/users', label: 'Users and Access', icon: Users, platformOnly: false },
-  { to: '/academics', label: 'Academics', icon: GraduationCap, platformOnly: false },
-  { to: '/exams', label: 'Examinations', icon: ClipboardList, platformOnly: false },
-  { to: '/configuration', label: 'Configuration', icon: Sliders, platformOnly: false },
-  { to: '/data-management', label: 'Data Management', icon: Database, platformOnly: false },
-  { to: '/audit-logs', label: 'Audit Logs', icon: ShieldCheck, platformOnly: false },
+  { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/institutions', label: 'Institutions', icon: Building2 },
+  { to: '/organizations', label: 'Organizations', icon: Network },
+  { to: '/users', label: 'Users and Access', icon: Users },
+  { to: '/academics', label: 'Academics', icon: GraduationCap },
+  { to: '/front-office', label: 'Front Office', icon: Store },
+  { to: '/exams', label: 'Examinations', icon: ClipboardList },
+  { to: '/configuration', label: 'Configuration', icon: Sliders },
+  { to: '/data-management', label: 'Data Management', icon: Database },
+  { to: '/audit-logs', label: 'Audit Logs', icon: ShieldCheck },
 ]
+
+const TIER_BADGE_STYLES: Record<AdminPreviewTier, string> = {
+  ALL: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  MANAGEMENT: 'bg-amber-50 text-amber-800 border-amber-200',
+  LEAD_TEAM: 'bg-blue-50 text-blue-800 border-blue-200',
+  OPERATIONAL: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+}
 
 export function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -43,9 +55,11 @@ export function AppLayout() {
     context,
     activeInstitutionId,
     activeExamCycleId,
+    previewTier,
     setContext,
     setActiveInstitution,
     setActiveExamCycle,
+    setPreviewTier,
     signOut,
   } = useAppStore()
 
@@ -81,7 +95,15 @@ export function AppLayout() {
   const hasPlatformAccess = platformRoles.length > 0
   const activeMembership = memberships.find((m) => m.institution_id === activeInstitutionId)
   const activeCycle = examCycles.find((c) => c.id === activeExamCycleId) ?? null
-  const visibleNav = navItems.filter((item) => !item.platformOnly || (hasPlatformAccess && context === 'PLATFORM'))
+
+  const access = resolveUserAccess({
+    platformRoles,
+    activeMembership,
+    context,
+    previewTier,
+  })
+
+  const visibleNav = navItems.filter((item) => access.canAccessRoute(item.to))
 
   return (
     <div className="min-h-screen flex bg-slate-50">
@@ -93,8 +115,8 @@ export function AppLayout() {
       >
         <div className="h-16 px-4 flex items-center justify-between border-b border-slate-800">
           <div>
-            <p className="text-sm font-semibold tracking-wide text-white">Command Center</p>
-            <p className="text-xs text-slate-400">Multi-Institution ERP</p>
+            <p className="text-sm font-semibold tracking-wide text-white">Mango Tree ERP</p>
+            <p className="text-xs text-slate-400">Multi-Tenant 3-Tier Suite</p>
           </div>
           <button
             type="button"
@@ -171,6 +193,25 @@ export function AppLayout() {
               </select>
             </div>
           )}
+
+          {context === 'INSTITUTION' && access.isFullAdmin && (
+            <div className="pt-1">
+              <label className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-amber-300 mb-1 px-0.5">
+                <Eye className="h-3 w-3" />
+                Admin Workspace View
+              </label>
+              <select
+                value={previewTier}
+                onChange={(e) => setPreviewTier(e.target.value as AdminPreviewTier)}
+                className="w-full rounded-md bg-slate-800 border border-amber-500/40 px-2.5 py-1.5 text-xs text-amber-100 focus:outline-none focus:ring-1 focus:ring-amber-400"
+              >
+                <option value="ALL">All Access (Admin)</option>
+                <option value="MANAGEMENT">1. Management Team</option>
+                <option value="LEAD_TEAM">2. Lead Team (HOD/COE/Dean)</option>
+                <option value="OPERATIONAL">3. Operational User</option>
+              </select>
+            </div>
+          )}
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
@@ -212,6 +253,22 @@ export function AppLayout() {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
+        {access.isPreviewMode && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 lg:px-6 py-1.5 flex items-center justify-between text-xs text-amber-900">
+            <span>
+              <strong>Tier Preview Active:</strong> Viewing navigation, dashboard, and exam tabs as{' '}
+              <strong>{TIER_LABELS[access.effectiveTier]}</strong>.
+            </span>
+            <button
+              type="button"
+              onClick={() => setPreviewTier('ALL')}
+              className="font-semibold underline hover:text-amber-700"
+            >
+              Return to Full Admin
+            </button>
+          </div>
+        )}
+
         <header className="h-16 bg-white border-b border-slate-200 px-4 lg:px-6 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <button
@@ -222,8 +279,15 @@ export function AppLayout() {
               <Menu className="h-5 w-5" />
             </button>
             <div className="flex items-center gap-2 text-sm min-w-0">
-              <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-medium text-xs shrink-0">
-                {context === 'PLATFORM' ? 'Platform Administration' : 'Institution Administration'}
+              <span
+                className={cn(
+                  'px-2 py-0.5 rounded border font-medium text-xs shrink-0',
+                  context === 'PLATFORM'
+                    ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                    : TIER_BADGE_STYLES[access.effectiveTier]
+                )}
+              >
+                {context === 'PLATFORM' ? 'Platform Admin' : TIER_LABELS[access.effectiveTier]}
               </span>
               {context === 'INSTITUTION' && activeMembership && (
                 <span className="text-slate-700 font-semibold truncate">
@@ -240,7 +304,12 @@ export function AppLayout() {
           </div>
 
           <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 shrink-0">
-            {context === 'PLATFORM' ? platformRoles.join(', ') : activeMembership?.roles.join(', ')}
+            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium">
+              {access.scopeBadge}
+            </span>
+            <span className="hidden xl:inline text-slate-400">
+              {context === 'PLATFORM' ? platformRoles.join(', ') : activeMembership?.roles.join(', ')}
+            </span>
           </div>
         </header>
 

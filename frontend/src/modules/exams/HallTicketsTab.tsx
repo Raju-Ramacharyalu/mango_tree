@@ -29,6 +29,7 @@ import {
   renderSignatureBlockHtml,
   renderWatermarkHtml,
   signPrivateAssets,
+  signStudentPhotosWithFallback,
 } from './printBranding'
 import { cn } from '@/utils/cn'
 
@@ -286,10 +287,17 @@ export function HallTicketsTab({ institutionId, cycle, canIssue, canPrint }: Pro
     setIsPrinting(true)
     try {
       const branding = await fetchInstitutionBranding(institutionId)
-      const signedMap = await signPrivateAssets([
-        branding.coe_signature_path,
-        branding.principal_signature_path,
-        ...printable.map((t) => t.student_photo_url),
+      const [signedMap, photoMap] = await Promise.all([
+        signPrivateAssets([branding.coe_signature_path, branding.principal_signature_path]),
+        signStudentPhotosWithFallback(
+          institutionId,
+          printable.map((t) => ({
+            key: t.id,
+            photo_url: t.student_photo_url,
+            registration_number: t.student_reg_no,
+            admission_number: null,
+          }))
+        ),
       ])
 
       const coeSigUrl = branding.coe_signature_path ? signedMap.get(branding.coe_signature_path) : null
@@ -301,7 +309,7 @@ export function HallTicketsTab({ institutionId, cycle, canIssue, canPrint }: Pro
         .map((t) => {
           const writtenCourses = t.courses.filter((c) => !c.is_online_exempt && c.eligibility_status === 'ELIGIBLE')
           const onlineExempt = t.courses.filter((c) => c.is_online_exempt)
-          const photoSrc = t.student_photo_url ? signedMap.get(t.student_photo_url) ?? null : null
+          const photoSrc = photoMap.get(t.id) ?? null
 
           const rowsHtml = writtenCourses
             .map(

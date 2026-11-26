@@ -20,6 +20,13 @@ export interface InstitutionBranding {
 
 type SignedUrlMap = Map<string, string>
 
+export interface StudentPhotoLookupInput {
+  key: string
+  photo_url?: string | null
+  registration_number?: string | null
+  admission_number?: string | null
+}
+
 export function escapeHtml(val: string | number | null | undefined): string {
   return String(val ?? '')
     .replace(/&/g, '&amp;')
@@ -137,6 +144,85 @@ export async function signPrivateAssets(
   }
 
   return result
+}
+
+/**
+ * Resolves student photos in batch with automatic USN -> admission_number fallback
+ * so photos uploaded before USN migration keep appearing on Hall Tickets & Temp IDs.
+ */
+export async function signStudentPhotosWithFallback(
+  institutionId: string,
+  items: StudentPhotoLookupInput[],
+  expiresInSeconds = 300
+): Promise<SignedUrlMap> {
+  const resolved: SignedUrlMap = new Map()
+  const primaryPaths: string[] = []
+  const needsFallback: StudentPhotoLookupInput[] = []
+
+  for (const item of items) {
+    if (item.photo_url && item.photo_url.trim()) {
+      primaryPaths.push(item.photo_url.trim())
+    }
+  }
+
+  const primarySigned = await signPrivateAssets(primaryPaths, expiresInSeconds)
+
+  for (const item of items) {
+    const p = item.photo_url?.trim()
+    const url = p ? primarySigned.get(p) : undefined
+    if (url) {
+      resolved.set(item.key, url)
+    } else {
+      needsFallback.push(item)
+    }
+  }
+
+  if (needsFallback.length === 0) return resolved
+
+  // Index tenant-private-assets/{institutionId}/students/ once for fast extension-agnostic fallback
+  const fileIndex = new Map<string, string>()
+  const folder = `${institutionId}/students`
+  let offset = 0
+  const limit = 1000
+  while (true) {
+    const { data: files, error } = await supabase.storage
+      .from(PRIVATE_ASSETS_BUCKET)
+      .list(folder, { limit, offset })
+    if (error || !files || files.length === 0) break
+    for (const f of files) {
+      if (!f.name || f.name === '.emptyFolderPlaceholder') continue
+      const stem = f.name.replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+      if (stem && !fileIndex.has(stem)) {
+        fileIndex.set(stem, `${folder}/${f.name}`)
+      }
+    }
+    if (files.length < limit) break
+    offset += limit
+  }
+
+  const fallbackPathByKey = new Map<string, string>()
+  for (const item of needsFallback) {
+    const candidates = [item.registration_number, item.admission_number]
+      .filter((v): v is string => Boolean(v && v.trim()))
+      .map((v) => v.replace(/[^A-Za-z0-9]/g, '').toUpperCase())
+    for (const stem of candidates) {
+      const path = fileIndex.get(stem)
+      if (path) {
+        fallbackPathByKey.set(item.key, path)
+        break
+      }
+    }
+  }
+
+  if (fallbackPathByKey.size > 0) {
+    const signedFallback = await signPrivateAssets(Array.from(fallbackPathByKey.values()), expiresInSeconds)
+    for (const [key, path] of fallbackPathByKey.entries()) {
+      const url = signedFallback.get(path)
+      if (url) resolved.set(key, url)
+    }
+  }
+
+  return resolved
 }
 
 export function renderBrandedHeaderHtml(
