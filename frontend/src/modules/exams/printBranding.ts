@@ -18,6 +18,8 @@ export interface InstitutionBranding {
   principal_signature_path: string | null
 }
 
+type SignedUrlMap = Map<string, string>
+
 export function escapeHtml(val: string | number | null | undefined): string {
   return String(val ?? '')
     .replace(/&/g, '&amp;')
@@ -26,10 +28,6 @@ export function escapeHtml(val: string | number | null | undefined): string {
     .replace(/"/g, '&quot;')
 }
 
-/**
- * Fetches dynamic multi-tenant branding (Top-Left Logo, Top-Right Logo, Watermark,
- * Accreditation Subtitle, and Private Signature paths) for any active institution.
- */
 export async function fetchInstitutionBranding(
   institutionId: string,
   fallbackName = 'Institution'
@@ -107,15 +105,11 @@ export async function fetchInstitutionBranding(
   }
 }
 
-/**
- * Generates short-lived (5-minute) signed URLs in batches of 100 for private
- * student photos and COE/Principal signatures. Already-HTTP URLs pass through unchanged.
- */
 export async function signPrivateAssets(
   paths: Array<string | null | undefined>,
   expiresInSeconds = 300
-): Promise> {
-  const result = new Map<string, string>()
+): Promise<SignedUrlMap> {
+  const result: SignedUrlMap = new Map()
   const storagePaths: string[] = []
 
   for (const p of paths) {
@@ -145,10 +139,6 @@ export async function signPrivateAssets(
   return result
 }
 
-/**
- * Renders the standardized 3-column branded header:
- * [Top-Left Logo] | [Institution Name + Affiliation + Badge] | [Top-Right Logo]
- */
 export function renderBrandedHeaderHtml(
   branding: InstitutionBranding,
   documentBadge: string,
@@ -186,11 +176,6 @@ export function renderBrandedHeaderHtml(
   </div>`
 }
 
-/**
- * Renders an optional background watermark layer.
- * mode='per-page' places it inside a relative .page box (Hall Tickets, Posters, Grade Cards, Form B).
- * mode='fixed' pins it across flowing multi-page reports (Appearing Lists, Form A, QPDS, Marks Sheet).
- */
 export function renderWatermarkHtml(
   branding: InstitutionBranding,
   mode: 'per-page' | 'fixed'
@@ -215,10 +200,6 @@ export function renderSignatureBlockHtml(
   </div>`
 }
 
-/**
- * Opens an A4 print popup with unified branding CSS, optional fixed watermark,
- * and automatic Promise.all image decode synchronization before window.print().
- */
 export function openBrandedPrintWindow(params: {
   title: string
   landscape?: boolean
