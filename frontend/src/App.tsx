@@ -37,6 +37,9 @@ const ExternalSeeDrafterPage = lazy(() =>
 const OperationsPage = lazy(() =>
   import('@/modules/operations/OperationsPage').then((m) => ({ default: m.OperationsPage }))
 )
+const FacultyPortalPage = lazy(() =>
+  import('@/modules/faculty-portal/FacultyPortalPage').then((m) => ({ default: m.FacultyPortalPage }))
+)
 const StudentPortalPage = lazy(() =>
   import('@/modules/student-portal/StudentPortalPage').then((m) => ({ default: m.StudentPortalPage }))
 )
@@ -184,6 +187,14 @@ function AppRoutes() {
           element={
             <TierRouteGuard path="/operations">
               <OperationsPage />
+            </TierRouteGuard>
+          }
+        />
+        <Route
+          path="/faculty-portal"
+          element={
+            <TierRouteGuard path="/faculty-portal">
+              <FacultyPortalPage />
             </TierRouteGuard>
           }
         />

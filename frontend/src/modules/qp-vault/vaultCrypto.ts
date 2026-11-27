@@ -200,14 +200,14 @@ export function renderMathToHtmlString(rawText = ''): string {
     .map((token) => {
       if (token.startsWith('$$') && token.endsWith('$$')) {
         try {
-          return katex.renderToString(token.slice(2, -2), { displayMode: true, throwOnError: false })
+          return katex.renderToString(normalizeMathExpression(token.slice(2, -2)), { displayMode: true, throwOnError: false })
         } catch {
           return escapePlain(token)
         }
       }
       if (token.startsWith('$') && token.endsWith('$')) {
         try {
-          return katex.renderToString(token.slice(1, -1), { displayMode: false, throwOnError: false })
+          return katex.renderToString(normalizeMathExpression(token.slice(1, -1)), { displayMode: false, throwOnError: false })
         } catch {
           return escapePlain(token)
         }
@@ -259,4 +259,28 @@ export function compressDiagramToDataUrl(file: File): Promise<string> {
     }
     reader.readAsDataURL(file)
   })
+}
+
+export function containsMathOrSpecialSymbols(str = ''): boolean {
+  if (!str) return false
+  return /\$|\\(frac|int|iint|sum|prod|sqrt|lim|alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|tau|phi|omega|Omega|Delta|infty|pm|leq|geq|neq|approx|times|div|partial|nabla|vec|hat|bar|begin|cdot|rightarrow|rightleftharpoons|equiv)|[^\x00-\x7F]/.test(
+    String(str)
+  )
+}
+
+export function normalizeMathExpression(expr = ''): string {
+  let s = String(expr).trim()
+  s = s.replace(/\\left\[\s*\\begin\{matrix\}([\s\S]*?)\\end\{matrix\}\s*\\right\]/g, '\\begin{bmatrix}$1\\end{bmatrix}')
+  s = s.replace(/\[\s*\\begin\{matrix\}([\s\S]*?)\\end\{matrix\}\s*\]/g, '\\begin{bmatrix}$1\\end{bmatrix}')
+  s = s.replace(/\\left\(\s*\\begin\{matrix\}([\s\S]*?)\\end\{matrix\}\s*\\right\)/g, '\\begin{pmatrix}$1\\end{pmatrix}')
+  s = s.replace(/\(\s*\\begin\{matrix\}([\s\S]*?)\\end\{matrix\}\s*\)/g, '\\begin{pmatrix}$1\\end{pmatrix}')
+  s = s.replace(/\\left\|\s*\\begin\{matrix\}([\s\S]*?)\\end\{matrix\}\s*\\right\|/g, '\\begin{vmatrix}$1\\end{vmatrix}')
+  s = s.replace(/\|\s*\\begin\{matrix\}([\s\S]*?)\\end\{matrix\}\s*\|/g, '\\begin{vmatrix}$1\\end{vmatrix}')
+  s = s.replace(/\\?\bmod\s*~\s*/gi, '\\text{mod } ')
+  s = s.replace(/~/g, '\\ ')
+  return s
+}
+
+export function getBase64SizeKB(dataUrl = ''): number {
+  return dataUrl ? Math.max(1, Math.round((dataUrl.length * 0.75) / 1024)) : 0
 }
