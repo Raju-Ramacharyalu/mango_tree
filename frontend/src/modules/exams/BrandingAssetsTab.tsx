@@ -29,6 +29,7 @@ interface Props {
 interface StudentPhotoRef {
   id: string
   registration_number: string
+  admission_number?: string | null
   full_name: string
   photo_url: string | null
 }
@@ -103,7 +104,7 @@ export function BrandingAssetsTab({ institutionId, canManageBranding, canManageP
       while (true) {
         const { data, error } = await supabase
           .from('students')
-          .select('id, registration_number, full_name, photo_url')
+          .select('id, registration_number, admission_number, full_name, photo_url')
           .eq('institution_id', institutionId)
           .is('deleted_at', null)
           .order('registration_number', { ascending: true })
@@ -122,9 +123,48 @@ export function BrandingAssetsTab({ institutionId, canManageBranding, canManageP
     const map = new Map<string, StudentPhotoRef>()
     for (const s of allStudents) {
       map.set(s.registration_number.trim().toUpperCase(), s)
+      const adm = s.admission_number?.trim().toUpperCase()
+      if (adm && !map.has(adm)) {
+        map.set(adm, s)
+      }
     }
     return map
   }, [allStudents])
+
+  const exportUnmatchedCsv = () => {
+    const lines = [
+      'Filename,Parsed_ID',
+      ...unmatchedQueued.map((u) => {
+        const stem = u.file.name.replace(/\.[^.]+$/, '').replace(/\s*\(\d+\)$/, '').trim().toUpperCase()
+        return `"${u.file.name.replace(/"/g, '""')}","${stem}"`
+      }),
+    ]
+    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'Unmatched_Photo_Filenames.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const exportMissingPhotoStudentsCsv = () => {
+    const missing = allStudents.filter((s) => !s.photo_url)
+    const lines = [
+      'USN,Admission_Number,Full_Name',
+      ...missing.map(
+        (s) =>
+          `"${s.registration_number}","${s.admission_number ?? ''}","${s.full_name.replace(/"/g, '""')}"`
+      ),
+    ]
+    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'Students_Missing_Photos.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   const studentsWithPhotoCount = useMemo(
     () => allStudents.filter((s) => Boolean(s.photo_url)).length,
@@ -312,7 +352,7 @@ export function BrandingAssetsTab({ institutionId, canManageBranding, canManageP
       return {
         file,
         stemUsn,
-        student: studentByUsn.get(stemUsn) ?? null,
+        student: studentByUsn.get(stemUsn.replace(/\s*\(\d+\)$/, '').trim()) ?? null,
       }
     })
     setQueuedPhotos(items)
@@ -841,12 +881,32 @@ export function BrandingAssetsTab({ institutionId, canManageBranding, canManageP
 
         {queuedPhotos.length > 0 && (
           <div className="space-y-2 rounded-md bg-slate-50 border border-slate-200 p-3 text-xs">
-            <p className="font-semibold text-slate-800">
-              Preview Queue: <span className="text-emerald-700">{matchedQueued.length} matched</span> ·{' '}
-              <span className={unmatchedQueued.length > 0 ? 'text-amber-700' : 'text-slate-500'}>
-                {unmatchedQueued.length} unmatched (will be skipped)
-              </span>
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-semibold text-slate-800">
+                Preview Queue: <span className="text-emerald-700">{matchedQueued.length} matched</span> ·{' '}
+                <span className={unmatchedQueued.length > 0 ? 'text-amber-700' : 'text-slate-500'}>
+                  {unmatchedQueued.length} unmatched (will be skipped)
+                </span>
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {unmatchedQueued.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={exportUnmatchedCsv}
+                    className="rounded border border-amber-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-50"
+                  >
+                    Download Unmatched CSV ({unmatchedQueued.length})
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={exportMissingPhotoStudentsCsv}
+                  className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  DB Missing Photos CSV ({allStudents.length - studentsWithPhotoCount})
+                </button>
+              </div>
+            </div>
             {unmatchedQueued.length > 0 && (
               <div className="text-[11px] text-amber-800">
                 Unmatched filenames:{' '}
