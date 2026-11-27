@@ -37,6 +37,9 @@ const ExternalSeeDrafterPage = lazy(() =>
 const OperationsPage = lazy(() =>
   import('@/modules/operations/OperationsPage').then((m) => ({ default: m.OperationsPage }))
 )
+const AnalyticsPage = lazy(() =>
+  import('@/modules/analytics/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage }))
+)
 const FacultyPortalPage = lazy(() =>
   import('@/modules/faculty-portal/FacultyPortalPage').then((m) => ({ default: m.FacultyPortalPage }))
 )
@@ -179,6 +182,14 @@ function AppRoutes() {
           element={
             <TierRouteGuard path="/qp-vault">
               <QpVaultPage />
+            </TierRouteGuard>
+          }
+        />
+        <Route
+          path="/analytics"
+          element={
+            <TierRouteGuard path="/analytics">
+              <AnalyticsPage />
             </TierRouteGuard>
           }
         />

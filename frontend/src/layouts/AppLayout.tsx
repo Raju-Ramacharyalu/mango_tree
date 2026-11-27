@@ -23,6 +23,7 @@ import {
   Briefcase,
   Smartphone,
   UserCheck,
+  TrendingUp,
 } from 'lucide-react'
 import { supabase } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
@@ -40,6 +41,7 @@ const navItems = [
   { to: '/governance', label: 'BOS & CIE', icon: Landmark },
   { to: '/qp-vault', label: 'BOE & QP Vault', icon: KeyRound },
   { to: '/operations', label: 'Duties & MIS', icon: Briefcase },
+  { to: '/analytics', label: 'Analytics & Reval', icon: TrendingUp },
   { to: '/faculty-portal', label: 'Faculty Portal', icon: UserCheck },
   { to: '/student-portal', label: 'Student Portal', icon: Smartphone },
   { to: '/front-office', label: 'Front Office', icon: Store },

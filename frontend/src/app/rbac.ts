@@ -174,11 +174,11 @@ export function resolveUserAccess(params: {
     }
 
     if (effectiveTier === 'MANAGEMENT') {
-      return ['/front-office', '/governance', '/operations', '/academics', '/exams', '/audit-logs'].includes(path)
+      return ['/front-office', '/governance', '/operations', '/analytics', '/academics', '/exams', '/audit-logs'].includes(path)
     }
 
     if (effectiveTier === 'LEAD_TEAM') {
-      if (['/faculty-portal', '/front-office', '/governance', '/qp-vault', '/operations', '/student-portal', '/academics', '/exams', '/users'].includes(path)) return true
+      if (['/faculty-portal', '/front-office', '/governance', '/qp-vault', '/operations', '/analytics', '/student-portal', '/academics', '/exams', '/users'].includes(path)) return true
       if (isCoeOrExecutiveLead && ['/institutions', '/configuration', '/data-management', '/audit-logs'].includes(path)) {
         return true
       }
