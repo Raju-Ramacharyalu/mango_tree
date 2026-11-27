@@ -292,9 +292,10 @@ export function openBrandedPrintWindow(params: {
   branding: InstitutionBranding
   watermarkMode?: 'per-page' | 'fixed'
   extraCss?: string
+  headHtml?: string
   bodyHtml: string
 }): void {
-  const { title, landscape = false, branding, watermarkMode = 'fixed', extraCss = '', bodyHtml } = params
+  const { title, landscape = false, branding, watermarkMode = 'fixed', extraCss = '', headHtml = '', bodyHtml } = params
   const win = window.open('', '_blank', 'width=1050,height=840')
   if (!win) {
     window.alert('Please allow pop-ups in your browser to print branded A4 exam documents.')
@@ -308,6 +309,7 @@ export function openBrandedPrintWindow(params: {
 <head>
   <meta charset="utf-8" />
   <title>${escapeHtml(title)}</title>
+  ${headHtml}
   <style>
     @page { size: A4 ${landscape ? 'landscape' : 'portrait'}; margin: 10mm; }
     * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }

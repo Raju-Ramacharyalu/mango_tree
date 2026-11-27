@@ -13,6 +13,8 @@ import { UsersPage } from '@/modules/users/UsersPage'
 import { AcademicsPage } from '@/modules/academics/AcademicsPage'
 import { FrontOfficePage } from '@/modules/front-office/FrontOfficePage'
 import { GovernancePage } from '@/modules/governance/GovernancePage'
+import { QpVaultPage } from '@/modules/qp-vault/QpVaultPage'
+import { ExternalSeeDrafterPage } from '@/modules/qp-vault/ExternalSeeDrafterPage'
 import { ExamsPage } from '@/modules/exams/ExamsPage'
 import { ConfigurationPage } from '@/modules/configuration/ConfigurationPage'
 import { DataManagementPage } from '@/modules/migrations/DataManagementPage'
@@ -59,11 +61,17 @@ function AppRoutes() {
   }
 
   if (!session) {
-    return <LoginPage />
+    return (
+      <Routes>
+        <Route path="/setter-drafter" element={<ExternalSeeDrafterPage />} />
+        <Route path="*" element={<LoginPage />} />
+      </Routes>
+    )
   }
 
   return (
     <Routes>
+      <Route path="/setter-drafter" element={<ExternalSeeDrafterPage />} />
       <Route element={<AppLayout />}>
         <Route path="/" element={<DashboardPage />} />
         <Route
@@ -95,6 +103,14 @@ function AppRoutes() {
           element={
             <TierRouteGuard path="/academics">
               <AcademicsPage />
+            </TierRouteGuard>
+          }
+        />
+        <Route
+          path="/qp-vault"
+          element={
+            <TierRouteGuard path="/qp-vault">
+              <QpVaultPage />
             </TierRouteGuard>
           }
         />
