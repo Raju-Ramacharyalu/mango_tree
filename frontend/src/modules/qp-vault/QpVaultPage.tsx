@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Shield, Users, Activity, BookOpen, PenTool, KeyRound } from 'lucide-react'
+import { Shield, Users, Activity, BookOpen, PenTool, KeyRound, Package } from 'lucide-react'
 import { supabase } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import { resolveUserAccess } from '@/app/rbac'
@@ -16,9 +16,10 @@ import { SeeProgressTab } from './SeeProgressTab'
 import { IaVaultAllocationsTab } from './IaVaultAllocationsTab'
 import { FacultyIaDrafterTab } from './FacultyIaDrafterTab'
 import { SecurityVaultTab } from './SecurityVaultTab'
+import { DispatchPackagerTab } from './DispatchPackagerTab'
 import { cn } from '@/utils/cn'
 
-type QpVaultTab = 'boe' | 'see-progress' | 'ia-vault' | 'faculty-ia' | 'security'
+type QpVaultTab = 'boe' | 'packager' | 'see-progress' | 'ia-vault' | 'faculty-ia' | 'security'
 
 function unwrap<T>(val: T | T[] | null | undefined): T | null {
   if (!val) return null
@@ -45,6 +46,7 @@ export function QpVaultPage() {
     const tabs: Array<{ id: QpVaultTab; label: string; icon: typeof Users }> = []
     if (canLeadNominate) tabs.push({ id: 'boe', label: 'BOE Appointments', icon: Users })
     if (canCoeVault) {
+      tabs.push({ id: 'packager', label: 'Dispatch & Packager', icon: Package })
       tabs.push({ id: 'see-progress', label: 'SEE Progress & Decrypt', icon: Activity })
       tabs.push({ id: 'ia-vault', label: 'IA Allocations & OMR Keys', icon: BookOpen })
     }
@@ -321,6 +323,14 @@ export function QpVaultPage() {
           nominations={nominations}
           canNominate={canLeadNominate}
           canCoeApprove={canCoeVault}
+        />
+      )}
+      {activeTab === 'packager' && (
+        <DispatchPackagerTab
+          institutionName={instName}
+          cycle={activeCycle}
+          courses={courses}
+          nominations={nominations}
         />
       )}
       {activeTab === 'see-progress' && (
