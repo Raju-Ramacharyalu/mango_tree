@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { supabase } from '@/services/supabase'
@@ -6,25 +6,66 @@ import { useAppStore } from '@/app/useAppStore'
 import { resolveUserAccess } from '@/app/rbac'
 import { AppLayout } from '@/layouts/AppLayout'
 import { LoginPage } from '@/modules/auth/LoginPage'
-import { DashboardPage } from '@/modules/dashboard/DashboardPage'
-import { InstitutionsPage } from '@/modules/institutions/InstitutionsPage'
-import { OrganizationsPage } from '@/modules/organizations/OrganizationsPage'
-import { UsersPage } from '@/modules/users/UsersPage'
-import { AcademicsPage } from '@/modules/academics/AcademicsPage'
-import { FrontOfficePage } from '@/modules/front-office/FrontOfficePage'
-import { GovernancePage } from '@/modules/governance/GovernancePage'
-import { QpVaultPage } from '@/modules/qp-vault/QpVaultPage'
-import { ExternalSeeDrafterPage } from '@/modules/qp-vault/ExternalSeeDrafterPage'
-import { ExamsPage } from '@/modules/exams/ExamsPage'
-import { ConfigurationPage } from '@/modules/configuration/ConfigurationPage'
-import { DataManagementPage } from '@/modules/migrations/DataManagementPage'
-import { AuditLogsPage } from '@/modules/audit/AuditLogsPage'
+
+const DashboardPage = lazy(() =>
+  import('@/modules/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage }))
+)
+const InstitutionsPage = lazy(() =>
+  import('@/modules/institutions/InstitutionsPage').then((m) => ({ default: m.InstitutionsPage }))
+)
+const OrganizationsPage = lazy(() =>
+  import('@/modules/organizations/OrganizationsPage').then((m) => ({ default: m.OrganizationsPage }))
+)
+const UsersPage = lazy(() =>
+  import('@/modules/users/UsersPage').then((m) => ({ default: m.UsersPage }))
+)
+const AcademicsPage = lazy(() =>
+  import('@/modules/academics/AcademicsPage').then((m) => ({ default: m.AcademicsPage }))
+)
+const FrontOfficePage = lazy(() =>
+  import('@/modules/front-office/FrontOfficePage').then((m) => ({ default: m.FrontOfficePage }))
+)
+const GovernancePage = lazy(() =>
+  import('@/modules/governance/GovernancePage').then((m) => ({ default: m.GovernancePage }))
+)
+const QpVaultPage = lazy(() =>
+  import('@/modules/qp-vault/QpVaultPage').then((m) => ({ default: m.QpVaultPage }))
+)
+const ExternalSeeDrafterPage = lazy(() =>
+  import('@/modules/qp-vault/ExternalSeeDrafterPage').then((m) => ({ default: m.ExternalSeeDrafterPage }))
+)
+const OperationsPage = lazy(() =>
+  import('@/modules/operations/OperationsPage').then((m) => ({ default: m.OperationsPage }))
+)
+const StudentPortalPage = lazy(() =>
+  import('@/modules/student-portal/StudentPortalPage').then((m) => ({ default: m.StudentPortalPage }))
+)
+const ExamsPage = lazy(() =>
+  import('@/modules/exams/ExamsPage').then((m) => ({ default: m.ExamsPage }))
+)
+const ConfigurationPage = lazy(() =>
+  import('@/modules/configuration/ConfigurationPage').then((m) => ({ default: m.ConfigurationPage }))
+)
+const DataManagementPage = lazy(() =>
+  import('@/modules/migrations/DataManagementPage').then((m) => ({ default: m.DataManagementPage }))
+)
+const AuditLogsPage = lazy(() =>
+  import('@/modules/audit/AuditLogsPage').then((m) => ({ default: m.AuditLogsPage }))
+)
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { staleTime: 30_000, retry: 1 },
   },
 })
+
+function RouteFallback() {
+  return (
+    <div className="py-12 text-center text-xs text-slate-500">
+      Loading workspace module...
+    </div>
+  )
+}
 
 function TierRouteGuard({ path, children }: { path: string; children: ReactNode }) {
   const { platformRoles, memberships, activeInstitutionId, context, previewTier } = useAppStore()
@@ -34,7 +75,7 @@ function TierRouteGuard({ path, children }: { path: string; children: ReactNode 
   if (!access.canAccessRoute(path)) {
     return <Navigate to="/" replace />
   }
-  return <>{children}</>
+  return <Suspense fallback={<RouteFallback />}>{children}</Suspense>
 }
 
 function AppRoutes() {
@@ -62,18 +103,34 @@ function AppRoutes() {
 
   if (!session) {
     return (
-      <Routes>
-        <Route path="/setter-drafter" element={<ExternalSeeDrafterPage />} />
-        <Route path="*" element={<LoginPage />} />
-      </Routes>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/setter-drafter" element={<ExternalSeeDrafterPage />} />
+          <Route path="*" element={<LoginPage />} />
+        </Routes>
+      </Suspense>
     )
   }
 
   return (
     <Routes>
-      <Route path="/setter-drafter" element={<ExternalSeeDrafterPage />} />
+      <Route
+        path="/setter-drafter"
+        element={
+          <Suspense fallback={<RouteFallback />}>
+            <ExternalSeeDrafterPage />
+          </Suspense>
+        }
+      />
       <Route element={<AppLayout />}>
-        <Route path="/" element={<DashboardPage />} />
+        <Route
+          path="/"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <DashboardPage />
+            </Suspense>
+          }
+        />
         <Route
           path="/institutions"
           element={
@@ -107,6 +164,14 @@ function AppRoutes() {
           }
         />
         <Route
+          path="/governance"
+          element={
+            <TierRouteGuard path="/governance">
+              <GovernancePage />
+            </TierRouteGuard>
+          }
+        />
+        <Route
           path="/qp-vault"
           element={
             <TierRouteGuard path="/qp-vault">
@@ -115,10 +180,18 @@ function AppRoutes() {
           }
         />
         <Route
-          path="/governance"
+          path="/operations"
           element={
-            <TierRouteGuard path="/governance">
-              <GovernancePage />
+            <TierRouteGuard path="/operations">
+              <OperationsPage />
+            </TierRouteGuard>
+          }
+        />
+        <Route
+          path="/student-portal"
+          element={
+            <TierRouteGuard path="/student-portal">
+              <StudentPortalPage />
             </TierRouteGuard>
           }
         />
