@@ -12,6 +12,7 @@ import { OrganizationsPage } from '@/modules/organizations/OrganizationsPage'
 import { UsersPage } from '@/modules/users/UsersPage'
 import { AcademicsPage } from '@/modules/academics/AcademicsPage'
 import { FrontOfficePage } from '@/modules/front-office/FrontOfficePage'
+import { GovernancePage } from '@/modules/governance/GovernancePage'
 import { ExamsPage } from '@/modules/exams/ExamsPage'
 import { ConfigurationPage } from '@/modules/configuration/ConfigurationPage'
 import { DataManagementPage } from '@/modules/migrations/DataManagementPage'
@@ -94,6 +95,14 @@ function AppRoutes() {
           element={
             <TierRouteGuard path="/academics">
               <AcademicsPage />
+            </TierRouteGuard>
+          }
+        />
+        <Route
+          path="/governance"
+          element={
+            <TierRouteGuard path="/governance">
+              <GovernancePage />
             </TierRouteGuard>
           }
         />

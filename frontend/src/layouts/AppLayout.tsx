@@ -18,6 +18,7 @@ import {
   Calendar,
   Eye,
   Store,
+  Landmark,
 } from 'lucide-react'
 import { supabase } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
@@ -32,6 +33,7 @@ const navItems = [
   { to: '/organizations', label: 'Organizations', icon: Network },
   { to: '/users', label: 'Users and Access', icon: Users },
   { to: '/academics', label: 'Academics', icon: GraduationCap },
+  { to: '/governance', label: 'BOS & CIE', icon: Landmark },
   { to: '/front-office', label: 'Front Office', icon: Store },
   { to: '/exams', label: 'Examinations', icon: ClipboardList },
   { to: '/configuration', label: 'Configuration', icon: Sliders },

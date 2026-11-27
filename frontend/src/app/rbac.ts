@@ -174,11 +174,11 @@ export function resolveUserAccess(params: {
     }
 
     if (effectiveTier === 'MANAGEMENT') {
-      return ['/front-office', '/academics', '/exams', '/audit-logs'].includes(path)
+      return ['/front-office', '/governance', '/academics', '/exams', '/audit-logs'].includes(path)
     }
 
     if (effectiveTier === 'LEAD_TEAM') {
-      if (['/front-office', '/academics', '/exams', '/users'].includes(path)) return true
+      if (['/front-office', '/governance', '/academics', '/exams', '/users'].includes(path)) return true
       if (isCoeOrExecutiveLead && ['/institutions', '/configuration', '/data-management', '/audit-logs'].includes(path)) {
         return true
       }
@@ -186,7 +186,7 @@ export function resolveUserAccess(params: {
     }
 
     if (isPreviewMode) {
-      return ['/front-office', '/academics', '/exams'].includes(path)
+      return ['/front-office', '/governance', '/academics', '/exams'].includes(path)
     }
     if (instRoles.includes('STUDENT')) {
       return ['/exams'].includes(path)
@@ -197,7 +197,7 @@ export function resolveUserAccess(params: {
     if (instRoles.includes('EVALUATOR')) {
       return ['/exams'].includes(path)
     }
-    return ['/front-office', '/academics', '/exams'].includes(path)
+    return ['/front-office', '/governance', '/academics', '/exams'].includes(path)
   }
 
   let allowedExamTabs: ExamTabId[] = ALL_EXAM_TABS
