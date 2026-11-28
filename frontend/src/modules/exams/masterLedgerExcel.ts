@@ -249,8 +249,10 @@ function buildBranchSemesterBuckets(
     }
   >()
 
+  const allowedStudents = semMetaByStudent.size > 0 ? semMetaByStudent : null
   for (const cr of courseResults) {
     if (programFilter !== 'ALL' && cr.program_code !== programFilter) continue
+    if (allowedStudents && !allowedStudents.has(cr.student_id)) continue
     // Exclude purely PENDING rows if there are no marks at all and grade is PND
     const semNum = inferCourseSemester(cr.effective_course_code, cr.period_name)
     const key = `${cr.program_code}::${semNum}`
@@ -639,6 +641,9 @@ export async function exportA3MasterLedgerWorkbook(params: {
 }): Promise<void> {
   const { institutionName, cycle, semesterResults, courseResults, programFilter = 'ALL' } = params
   const buckets = buildBranchSemesterBuckets(semesterResults, courseResults, programFilter)
+  if (buckets.length === 0) {
+    throw new Error('No course-level marks loaded yet for this filter. Wait for the Marks Ledger to finish loading and retry.')
+  }
 
   const wb = new ExcelJS.Workbook()
   wb.creator = 'Mango Tree ERP'
@@ -789,6 +794,9 @@ export async function exportSplitA3LedgersZip(params: {
 }): Promise<number> {
   const { institutionName, cycle, semesterResults, courseResults, programFilter = 'ALL' } = params
   const buckets = buildBranchSemesterBuckets(semesterResults, courseResults, programFilter)
+  if (buckets.length === 0) {
+    throw new Error('No course-level marks loaded yet for this filter. Wait for the Marks Ledger to finish loading and retry.')
+  }
   const zip = new JSZip()
 
   for (const b of buckets) {
@@ -798,7 +806,7 @@ export async function exportSplitA3LedgersZip(params: {
     populateStyledBranchSemesterSheet(wb, `${b.programCode}_Ledger`, institutionName, cycle, b)
     const buf = await wb.xlsx.writeBuffer()
     const fileName = `Ledger_${b.programCode}_Sem${b.semNumber}_${cycle.cycle_type}.xlsx`
-    zip.file(fileName, buf)
+    zip.file(fileName, new Uint8Array(buf as ArrayBuffer))
   }
 
   const zipBlob = await zip.generateAsync({ type: 'blob' })

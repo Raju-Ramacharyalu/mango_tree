@@ -135,7 +135,7 @@ export function ResultsProcessingTab({
     },
   })
 
-  const { data: courseResults = [], isLoading: loadingLedger } = useQuery<ExamCourseResultItem[]>({
+  const { data: courseResults = [], isLoading: loadingLedger, error: courseLedgerError } = useQuery<ExamCourseResultItem[]>({
     queryKey: ['exam_course_results', institutionId, cycle?.id],
     enabled: Boolean(cycle?.id),
     queryFn: async () => {
@@ -1126,6 +1126,8 @@ export function ResultsProcessingTab({
           cycle={cycle}
           courseResults={courseResults}
           semesterResults={semesterResults}
+          loadingCourses={loadingLedger}
+          coursesError={courseLedgerError instanceof Error ? courseLedgerError.message : null}
         />
       )}
 

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Trophy, FileSpreadsheet, Printer, Award, FolderArchive } from 'lucide-react'
+import { Trophy, FileSpreadsheet, Printer, Award, FolderArchive, AlertTriangle, Loader2 } from 'lucide-react'
 import type { ExamCycle, ExamSemesterResultItem } from '@/types/exams'
 import {
   buildRankedStudentRows,
@@ -26,6 +26,8 @@ interface Props {
   cycle: ExamCycle
   courseResults: ExtendedCourseRow[]
   semesterResults: ExamSemesterResultItem[]
+  loadingCourses?: boolean
+  coursesError?: string | null
 }
 
 const AWARD_BADGES: Record<ClassAward, string> = {
@@ -44,12 +46,16 @@ export function RankAndLedgerPanel({
   cycle,
   courseResults,
   semesterResults,
+  loadingCourses = false,
+  coursesError = null,
 }: Props) {
   const [branchFilter, setBranchFilter] = useState('ALL')
   const [levelFilter, setLevelFilter] = useState<'ALL' | 'UG' | 'PG'>('ALL')
   const [excludeGraced, setExcludeGraced] = useState(true)
   const [topLimit, setTopLimit] = useState('25')
   const [exporting, setExporting] = useState<'NONE' | 'XLSX' | 'ZIP' | 'RANK'>('NONE')
+  const [exportError, setExportError] = useState<string | null>(null)
+  const courseDataReady = !loadingCourses && courseResults.length > 0
 
   const branches = useMemo(
     () => Array.from(new Set(semesterResults.map((s) => s.program_code))).sort(),
@@ -148,6 +154,19 @@ export function RankAndLedgerPanel({
 
   return (
     <div className="space-y-4">
+      {loadingCourses && (
+        <div className="flex items-center gap-2 rounded-md bg-indigo-50 border border-indigo-200 px-3 py-2 text-xs text-indigo-800">
+          <Loader2 className="h-4 w-4 animate-spin shrink-0 text-indigo-600" />
+          Loading full course-level marks ledger for {cycle.code} ({semesterResults.length} students)... A3 Ledger &amp; Split ZIP exports will unlock once loaded.
+        </div>
+      )}
+      {(coursesError || exportError) && (
+        <div className="flex items-center gap-2 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" />
+          {coursesError || exportError}
+        </div>
+      )}
+
       {/* KPI Distribution Cards */}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-xs">
         <div className="rounded-lg border border-slate-200 bg-white p-3">
@@ -228,8 +247,9 @@ export function RankAndLedgerPanel({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            disabled={scopedSemester.length === 0 || exporting !== 'NONE'}
+            disabled={scopedSemester.length === 0 || !courseDataReady || exporting !== 'NONE'}
             onClick={async () => {
+              setExportError(null)
               setExporting('ZIP')
               try {
                 await exportSplitA3LedgersZip({
@@ -239,6 +259,8 @@ export function RankAndLedgerPanel({
                   courseResults,
                   programFilter: branchFilter,
                 })
+              } catch (err) {
+                setExportError(err instanceof Error ? err.message : 'Split A3 ZIP export failed')
               } finally {
                 setExporting('NONE')
               }
@@ -246,12 +268,17 @@ export function RankAndLedgerPanel({
             className="inline-flex items-center gap-1.5 rounded-md bg-emerald-700 px-3 py-1.5 font-semibold text-white hover:bg-emerald-800 disabled:opacity-40"
           >
             <FolderArchive className="h-3.5 w-3.5" />
-            {exporting === 'ZIP' ? 'Packaging ZIP...' : 'Export Split A3 Ledgers (.zip)'}
+            {loadingCourses
+              ? 'Loading Marks...'
+              : exporting === 'ZIP'
+                ? 'Packaging ZIP...'
+                : 'Export Split A3 Ledgers (.zip)'}
           </button>
           <button
             type="button"
-            disabled={scopedSemester.length === 0 || exporting !== 'NONE'}
+            disabled={scopedSemester.length === 0 || !courseDataReady || exporting !== 'NONE'}
             onClick={async () => {
+              setExportError(null)
               setExporting('XLSX')
               try {
                 await exportA3MasterLedgerWorkbook({
@@ -261,6 +288,8 @@ export function RankAndLedgerPanel({
                   courseResults,
                   programFilter: branchFilter,
                 })
+              } catch (err) {
+                setExportError(err instanceof Error ? err.message : 'Combined A3 export failed')
               } finally {
                 setExporting('NONE')
               }
@@ -268,7 +297,11 @@ export function RankAndLedgerPanel({
             className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
           >
             <FileSpreadsheet className="h-3.5 w-3.5" />
-            {exporting === 'XLSX' ? 'Building A3...' : 'Export Combined A3 (.xlsx)'}
+            {loadingCourses
+              ? 'Loading Marks...'
+              : exporting === 'XLSX'
+                ? 'Building A3...'
+                : 'Export Combined A3 (.xlsx)'}
           </button>
           <button
             type="button"
