@@ -1013,7 +1013,7 @@ export function StudentPortalPage() {
 
       {error && (
         <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
-          {error instanceof Error ? error.message : 'Unable to load student portal'}
+          {error instanceof Error ? error.message : typeof (error as { message?: unknown })?.message === 'string' ? String((error as { message: string }).message) : 'Unable to load student portal'}
         </div>
       )}
 
