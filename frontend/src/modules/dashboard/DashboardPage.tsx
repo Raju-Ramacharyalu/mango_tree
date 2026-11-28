@@ -14,7 +14,7 @@ import {
   BookOpen,
   Building2,
 } from 'lucide-react'
-import { supabase } from '@/services/supabase'
+import { supabase, fetchAllRows } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import { resolveUserAccess, TIER_LABELS } from '@/app/rbac'
 
@@ -142,26 +142,58 @@ export function DashboardPage() {
           .order('is_default_active', { ascending: false })
           .order('created_at', { ascending: false }),
         activeExamCycleId
-          ? supabase
-              .from('exam_registrations')
-              .select('status, payment_status, total_fee, program_id')
-              .eq('institution_id', activeInstitutionId!)
-              .eq('exam_cycle_id', activeExamCycleId)
-          : Promise.resolve({ data: [], error: null }),
+          ? fetchAllRows<{
+              status: string
+              payment_status: string
+              total_fee: number | null
+              program_id: string
+            }>((from, to) =>
+              supabase
+                .from('exam_registrations')
+                .select('status, payment_status, total_fee, program_id')
+                .eq('institution_id', activeInstitutionId!)
+                .eq('exam_cycle_id', activeExamCycleId)
+                .order('id', { ascending: true })
+                .range(from, to)
+            ).then((data) => ({ data, error: null as Error | null }))
+          : Promise.resolve({
+              data: [] as Array<{
+                status: string
+                payment_status: string
+                total_fee: number | null
+                program_id: string
+              }>,
+              error: null as Error | null,
+            }),
         activeExamCycleId
-          ? supabase
-              .from('hall_tickets')
-              .select('status')
-              .eq('institution_id', activeInstitutionId!)
-              .eq('exam_cycle_id', activeExamCycleId)
-          : Promise.resolve({ data: [], error: null }),
+          ? fetchAllRows<{ status: string }>((from, to) =>
+              supabase
+                .from('hall_tickets')
+                .select('status')
+                .eq('institution_id', activeInstitutionId!)
+                .eq('exam_cycle_id', activeExamCycleId)
+                .order('id', { ascending: true })
+                .range(from, to)
+            ).then((data) => ({ data, error: null as Error | null }))
+          : Promise.resolve({ data: [] as Array<{ status: string }>, error: null as Error | null }),
         activeExamCycleId
-          ? supabase
-              .from('exam_semester_results')
-              .select('overall_status, sgpa, is_published')
-              .eq('institution_id', activeInstitutionId!)
-              .eq('exam_cycle_id', activeExamCycleId)
-          : Promise.resolve({ data: [], error: null }),
+          ? fetchAllRows<{
+              overall_status: string
+              sgpa: number | null
+              is_published: boolean
+            }>((from, to) =>
+              supabase
+                .from('exam_semester_results')
+                .select('overall_status, sgpa, is_published')
+                .eq('institution_id', activeInstitutionId!)
+                .eq('exam_cycle_id', activeExamCycleId)
+                .order('id', { ascending: true })
+                .range(from, to)
+            ).then((data) => ({ data, error: null as Error | null }))
+          : Promise.resolve({
+              data: [] as Array<{ overall_status: string; sgpa: number | null; is_published: boolean }>,
+              error: null as Error | null,
+            }),
         supabase
           .from('audit_logs')
           .select('id, table_name, action, created_at')

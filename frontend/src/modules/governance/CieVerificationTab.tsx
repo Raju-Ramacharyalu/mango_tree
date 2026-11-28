@@ -11,7 +11,7 @@ import {
   CheckCircle2,
   AlertTriangle,
 } from 'lucide-react'
-import { supabase } from '@/services/supabase'
+import { supabase, fetchAllRows } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import type { ExamCycle } from '@/types/exams'
 import type {
@@ -198,18 +198,21 @@ export function CieVerificationTab({
       }
 
       // Fetch active enrolled students in this program & semester/section
-      const { data: enrollData, error: enrollErr } = await supabase
-        .from('student_enrollments')
-        .select(`
-          student_id,
-          students (registration_number, full_name, deleted_at),
-          academic_periods (sequence_number, legacy_semester_id),
-          academic_sections (section_name)
-        `)
-        .eq('institution_id', institutionId)
-        .eq('program_id', alloc.program_id)
-        .eq('is_current', true)
-      if (enrollErr) throw enrollErr
+      const enrollData = await fetchAllRows<Record<string, unknown>>((from, to) =>
+        supabase
+          .from('student_enrollments')
+          .select(`
+            student_id,
+            students (registration_number, full_name, deleted_at),
+            academic_periods (sequence_number, legacy_semester_id),
+            academic_sections (section_name)
+          `)
+          .eq('institution_id', institutionId)
+          .eq('program_id', alloc.program_id)
+          .eq('is_current', true)
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
 
       const rows: CieMarkRow[] = []
       const seen = new Set<string>()

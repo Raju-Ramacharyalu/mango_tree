@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Receipt, Download, Link2, CheckCircle2, AlertTriangle, Search } from 'lucide-react'
-import { supabase } from '@/services/supabase'
+import { supabase, fetchAllRows } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import type { ExamCycle } from '@/types/exams'
 import type { FeeReceiptRow, PaymentMode, StudentFrontOfficeRecord } from '@/types/frontOffice'
@@ -98,15 +98,18 @@ export function CashBookTab({ institutionId, cycle, students, programs, canRecor
   const { data: receipts = [], isLoading } = useQuery<FeeReceiptRow[]>({
     queryKey: ['fee_receipts', institutionId, fromDate, toDate],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('fee_receipts')
-        .select('*')
-        .eq('institution_id', institutionId)
-        .gte('payment_date', fromDate)
-        .lte('payment_date', toDate)
-        .order('payment_date', { ascending: false })
-        .order('created_at', { ascending: false })
-      if (error) throw error
+      const data = await fetchAllRows<FeeReceiptRow>((from, to) =>
+        supabase
+          .from('fee_receipts')
+          .select('*')
+          .eq('institution_id', institutionId)
+          .gte('payment_date', fromDate)
+          .lte('payment_date', toDate)
+          .order('payment_date', { ascending: false })
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
       return (data ?? []).map((r) => ({
         ...(r as FeeReceiptRow),
         amount: Number(r.amount ?? 0),
@@ -118,12 +121,20 @@ export function CashBookTab({ institutionId, cycle, students, programs, canRecor
     queryKey: ['cashbook_cycle_regs', institutionId, cycle?.id],
     enabled: Boolean(cycle?.id),
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('exam_registrations')
-        .select('id, student_id, payment_status, total_fee')
-        .eq('institution_id', institutionId)
-        .eq('exam_cycle_id', cycle!.id)
-      if (error) throw error
+      const data = await fetchAllRows<{
+        id: string
+        student_id: string
+        payment_status: string
+        total_fee: number | null
+      }>((from, to) =>
+        supabase
+          .from('exam_registrations')
+          .select('id, student_id, payment_status, total_fee')
+          .eq('institution_id', institutionId)
+          .eq('exam_cycle_id', cycle!.id)
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
       return (data ?? []).map((r) => ({
         id: r.id as string,
         student_id: r.student_id as string,

@@ -14,7 +14,7 @@ import {
   Trash2,
   Lock,
 } from 'lucide-react'
-import { supabase } from '@/services/supabase'
+import { supabase, fetchAllRows } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import type {
   BundleStatus,
@@ -168,23 +168,31 @@ export function BundlesDecodingTab({ institutionId, institutionName, cycle, canD
     enabled: Boolean(cycle?.id && canDecode),
     queryFn: async () => {
       const [seatsRes, existingScriptsRes] = await Promise.all([
-        supabase
-          .from('exam_seat_allotments')
-          .select(`
-            id, registration_id, registration_course_id, student_id, course_id, program_id,
-            effective_course_code, attendance_status, booklet_number,
-            students (registration_number, full_name),
-            course_catalog (course_code, title),
-            programs (code, program_level)
-          `)
-          .eq('institution_id', institutionId)
-          .eq('exam_cycle_id', cycle!.id)
-          .in('attendance_status', ['PRESENT', 'MALPRACTICE']),
-        supabase
-          .from('exam_bundle_scripts')
-          .select('registration_course_id')
-          .eq('institution_id', institutionId)
-          .eq('exam_cycle_id', cycle!.id),
+        fetchAllRows<Record<string, unknown>>((from, to) =>
+          supabase
+            .from('exam_seat_allotments')
+            .select(`
+              id, registration_id, registration_course_id, student_id, course_id, program_id,
+              effective_course_code, attendance_status, booklet_number,
+              students (registration_number, full_name),
+              course_catalog (course_code, title),
+              programs (code, program_level)
+            `)
+            .eq('institution_id', institutionId)
+            .eq('exam_cycle_id', cycle!.id)
+            .in('attendance_status', ['PRESENT', 'MALPRACTICE'])
+            .order('id', { ascending: true })
+            .range(from, to)
+        ).then((data) => ({ data, error: null as Error | null })),
+        fetchAllRows<Record<string, unknown>>((from, to) =>
+          supabase
+            .from('exam_bundle_scripts')
+            .select('registration_course_id')
+            .eq('institution_id', institutionId)
+            .eq('exam_cycle_id', cycle!.id)
+            .order('id', { ascending: true })
+            .range(from, to)
+        ).then((data) => ({ data, error: null as Error | null })),
       ])
 
       if (seatsRes.error) throw seatsRes.error
@@ -228,22 +236,25 @@ export function BundlesDecodingTab({ institutionId, institutionName, cycle, canD
       }
 
       if (includeUnseatedApproved) {
-        const { data: regCourses, error: rcErr } = await supabase
-          .from('exam_registration_courses')
-          .select(`
-            id, registration_id, student_id, course_id,
-            course_catalog (course_code, title),
-            exam_registrations!inner (
-              status, program_id,
-              students (registration_number, full_name),
-              programs (code, program_level)
-            )
-          `)
-          .eq('institution_id', institutionId)
-          .eq('exam_cycle_id', cycle!.id)
-          .eq('is_online_exempt', false)
-          .eq('eligibility_status', 'ELIGIBLE')
-        if (rcErr) throw rcErr
+        const regCourses = await fetchAllRows<Record<string, unknown>>((from, to) =>
+          supabase
+            .from('exam_registration_courses')
+            .select(`
+              id, registration_id, student_id, course_id,
+              course_catalog (course_code, title),
+              exam_registrations!inner (
+                status, program_id,
+                students (registration_number, full_name),
+                programs (code, program_level)
+              )
+            `)
+            .eq('institution_id', institutionId)
+            .eq('exam_cycle_id', cycle!.id)
+            .eq('is_online_exempt', false)
+            .eq('eligibility_status', 'ELIGIBLE')
+            .order('id', { ascending: true })
+            .range(from, to)
+        )
 
         for (const rc of regCourses ?? []) {
           const rcId = rc.id as string

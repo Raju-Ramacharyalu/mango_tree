@@ -13,7 +13,7 @@ import {
   Lock,
   Search,
 } from 'lucide-react'
-import { supabase } from '@/services/supabase'
+import { supabase, fetchAllRows } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import type {
   CourseResultStatus,
@@ -130,22 +130,25 @@ export function ResultsProcessingTab({
     queryKey: ['exam_course_results', institutionId, cycle?.id],
     enabled: Boolean(cycle?.id),
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('exam_course_results')
-        .select(`
-          id, institution_id, exam_cycle_id, registration_id, registration_course_id,
-          student_id, course_id, program_id, effective_course_code, credits, is_online_exempt,
-          cie_marks, cie_max_marks, see_marks, see_max_marks, total_marks, max_total_marks,
-          percentage, grade_code, grade_point, result_status, source_bundle_id, is_published, remarks,
-          students (registration_number, full_name),
-          course_catalog (course_code, title),
-          programs (code, program_level),
-          exam_registrations (academic_periods (name))
-        `)
-        .eq('institution_id', institutionId)
-        .eq('exam_cycle_id', cycle!.id)
-        .order('effective_course_code', { ascending: true })
-      if (error) throw error
+      const data = await fetchAllRows<Record<string, unknown>>((from, to) =>
+        supabase
+          .from('exam_course_results')
+          .select(`
+            id, institution_id, exam_cycle_id, registration_id, registration_course_id,
+            student_id, course_id, program_id, effective_course_code, credits, is_online_exempt,
+            cie_marks, cie_max_marks, see_marks, see_max_marks, total_marks, max_total_marks,
+            percentage, grade_code, grade_point, result_status, source_bundle_id, is_published, remarks,
+            students (registration_number, full_name),
+            course_catalog (course_code, title),
+            programs (code, program_level),
+            exam_registrations (academic_periods (name))
+          `)
+          .eq('institution_id', institutionId)
+          .eq('exam_cycle_id', cycle!.id)
+          .order('effective_course_code', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
 
       return (data ?? [])
         .map((row) => {
@@ -170,7 +173,7 @@ export function ResultsProcessingTab({
             student_reg_no: stu?.registration_number ?? '—',
             student_name: stu?.full_name ?? '—',
             course_id: row.course_id as string,
-            course_code: cc?.course_code ?? row.effective_course_code,
+            course_code: cc?.course_code ?? (row.effective_course_code as string),
             course_title: cc?.title ?? '—',
             effective_course_code: row.effective_course_code as string,
             program_id: row.program_id as string,
@@ -206,17 +209,20 @@ export function ResultsProcessingTab({
     queryKey: ['exam_semester_results', institutionId, cycle?.id],
     enabled: Boolean(cycle?.id),
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('exam_semester_results')
-        .select(`
-          *,
-          students (registration_number, full_name),
-          programs (code, name, program_level),
-          academic_periods (name)
-        `)
-        .eq('institution_id', institutionId)
-        .eq('exam_cycle_id', cycle!.id)
-      if (error) throw error
+      const data = await fetchAllRows<Record<string, unknown>>((from, to) =>
+        supabase
+          .from('exam_semester_results')
+          .select(`
+            *,
+            students (registration_number, full_name),
+            programs (code, name, program_level),
+            academic_periods (name)
+          `)
+          .eq('institution_id', institutionId)
+          .eq('exam_cycle_id', cycle!.id)
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
 
       return (data ?? [])
         .map((row) => {
@@ -262,24 +268,36 @@ export function ResultsProcessingTab({
     mutationFn: async () => {
       if (!cycle) throw new Error('Select an exam cycle first.')
       const [regCoursesRes, seatsRes, existingRes] = await Promise.all([
-        supabase
-          .from('exam_registration_courses')
-          .select(`
-            id, registration_id, student_id, course_id, is_online_exempt,
-            course_catalog (course_code, default_credits, course_categories (default_max_cie, default_max_see)),
-            exam_registrations!inner (status, program_id)
-          `)
-          .eq('institution_id', institutionId)
-          .eq('exam_cycle_id', cycle.id),
-        supabase
-          .from('exam_seat_allotments')
-          .select('registration_course_id, effective_course_code, attendance_status')
-          .eq('institution_id', institutionId)
-          .eq('exam_cycle_id', cycle.id),
-        supabase
-          .from('exam_course_results')
-          .select('registration_course_id')
-          .eq('exam_cycle_id', cycle.id),
+        fetchAllRows<Record<string, unknown>>((from, to) =>
+          supabase
+            .from('exam_registration_courses')
+            .select(`
+              id, registration_id, student_id, course_id, is_online_exempt,
+              course_catalog (course_code, default_credits, course_categories (default_max_cie, default_max_see)),
+              exam_registrations!inner (status, program_id)
+            `)
+            .eq('institution_id', institutionId)
+            .eq('exam_cycle_id', cycle.id)
+            .order('id', { ascending: true })
+            .range(from, to)
+        ).then((data) => ({ data, error: null as Error | null })),
+        fetchAllRows<Record<string, unknown>>((from, to) =>
+          supabase
+            .from('exam_seat_allotments')
+            .select('registration_course_id, effective_course_code, attendance_status')
+            .eq('institution_id', institutionId)
+            .eq('exam_cycle_id', cycle.id)
+            .order('id', { ascending: true })
+            .range(from, to)
+        ).then((data) => ({ data, error: null as Error | null })),
+        fetchAllRows<Record<string, unknown>>((from, to) =>
+          supabase
+            .from('exam_course_results')
+            .select('registration_course_id')
+            .eq('exam_cycle_id', cycle.id)
+            .order('id', { ascending: true })
+            .range(from, to)
+        ).then((data) => ({ data, error: null as Error | null })),
       ])
 
       if (regCoursesRes.error) throw regCoursesRes.error
@@ -436,10 +454,14 @@ export function ResultsProcessingTab({
       }
 
       // Fetch registration period_ids for semester rollups
-      const { data: regs } = await supabase
-        .from('exam_registrations')
-        .select('id, academic_period_id')
-        .eq('exam_cycle_id', cycle.id)
+      const regs = await fetchAllRows<{ id: string; academic_period_id: string | null }>((from, to) =>
+        supabase
+          .from('exam_registrations')
+          .select('id, academic_period_id')
+          .eq('exam_cycle_id', cycle.id)
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
       const regPeriodMap = new Map((regs ?? []).map((r) => [r.id as string, (r.academic_period_id as string | null) ?? null]))
 
       // Aggregate per student for SGPA

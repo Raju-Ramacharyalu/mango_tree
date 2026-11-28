@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Download, Printer, Search, Layers, Users } from 'lucide-react'
-import { supabase } from '@/services/supabase'
+import { supabase, fetchAllRows } from '@/services/supabase'
 import type { AppearingRow, ExamCycle, ExamSessionCode, PaymentStatus, RegistrationCourseCategory, RegistrationStatus, EligibilityStatus } from '@/types/exams'
 import { fetchInstitutionBranding, openBrandedPrintWindow, renderBrandedHeaderHtml, renderSignatureBlockHtml, signPrivateAssets } from './printBranding'
 import { cn } from '@/utils/cn'
@@ -46,22 +46,26 @@ export function AppearingListsTab({ institutionId, institutionName, cycle }: Pro
     enabled: Boolean(cycle?.id),
     queryFn: async () => {
       const [regCoursesRes, slotsRes] = await Promise.all([
-        supabase
-          .from('exam_registration_courses')
-          .select(`
-            id, registration_id, student_id, course_id, attempt_number,
-            registration_category, is_online_exempt, eligibility_status,
-            course_catalog (course_code, title),
-            exam_registrations!inner (
-              id, status, payment_status, program_id, academic_period_id,
-              students (registration_number, full_name),
-              programs (code, name),
-              academic_periods (name),
-              student_enrollments (academic_sections (section_name))
-            )
-          `)
-          .eq('institution_id', institutionId)
-          .eq('exam_cycle_id', cycle!.id),
+        fetchAllRows<Record<string, unknown>>((from, to) =>
+          supabase
+            .from('exam_registration_courses')
+            .select(`
+              id, registration_id, student_id, course_id, attempt_number,
+              registration_category, is_online_exempt, eligibility_status,
+              course_catalog (course_code, title),
+              exam_registrations!inner (
+                id, status, payment_status, program_id, academic_period_id,
+                students (registration_number, full_name),
+                programs (code, name),
+                academic_periods (name),
+                student_enrollments (academic_sections (section_name))
+              )
+            `)
+            .eq('institution_id', institutionId)
+            .eq('exam_cycle_id', cycle!.id)
+            .order('id', { ascending: true })
+            .range(from, to)
+        ).then((data) => ({ data, error: null as Error | null })),
         supabase
           .from('exam_timetable_slots')
           .select('course_id, exam_date, session_code, start_time, end_time, is_omr_exam')

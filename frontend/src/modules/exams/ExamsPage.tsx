@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Calendar, Receipt, Users, CheckCircle2, ClipboardList, Ticket } from 'lucide-react'
-import { supabase } from '@/services/supabase'
+import { supabase, fetchAllRows } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import { resolveUserAccess, type ExamTabId } from '@/app/rbac'
 import type { ExamCycle } from '@/types/exams'
@@ -79,27 +79,41 @@ export function ExamsPage() {
   })
 
   const activeCycle = cycles.find((c) => c.id === activeExamCycleId) ?? cycles[0] ?? null
+  const activeCyclesGroup = useMemo(
+    () => cycles.filter((c) => c.status !== 'ARCHIVED' && c.status !== 'COMPLETED'),
+    [cycles]
+  )
+  const archivedCyclesGroup = useMemo(
+    () => cycles.filter((c) => c.status === 'ARCHIVED' || c.status === 'COMPLETED'),
+    [cycles]
+  )
 
   const { data: stats } = useQuery({
     queryKey: ['exam_cycle_stats', activeInstitutionId, activeCycle?.id],
     enabled: Boolean(activeInstitutionId && activeCycle?.id),
     queryFn: async () => {
-      const [regRes, htRes] = await Promise.all([
-        supabase
-          .from('exam_registrations')
-          .select('status, payment_status, total_fee')
-          .eq('institution_id', activeInstitutionId!)
-          .eq('exam_cycle_id', activeCycle!.id),
-        supabase
-          .from('hall_tickets')
-          .select('status')
-          .eq('institution_id', activeInstitutionId!)
-          .eq('exam_cycle_id', activeCycle!.id),
+      type RegStatRow = { status: string; payment_status: string; total_fee: number | null }
+      type TicketStatRow = { status: string }
+      const [rows, tickets] = await Promise.all([
+        fetchAllRows<RegStatRow>((from, to) =>
+          supabase
+            .from('exam_registrations')
+            .select('status, payment_status, total_fee')
+            .eq('institution_id', activeInstitutionId!)
+            .eq('exam_cycle_id', activeCycle!.id)
+            .order('id', { ascending: true })
+            .range(from, to)
+        ),
+        fetchAllRows<TicketStatRow>((from, to) =>
+          supabase
+            .from('hall_tickets')
+            .select('status')
+            .eq('institution_id', activeInstitutionId!)
+            .eq('exam_cycle_id', activeCycle!.id)
+            .order('id', { ascending: true })
+            .range(from, to)
+        ),
       ])
-      if (regRes.error) throw regRes.error
-      if (htRes.error) throw htRes.error
-      const rows = regRes.data ?? []
-      const tickets = htRes.data ?? []
       return {
         total: rows.length,
         approved: rows.filter((r) => r.status === 'APPROVED').length,
@@ -144,12 +158,25 @@ export function ExamsPage() {
               onChange={(e) => setActiveExamCycle(e.target.value || null)}
               className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800"
             >
-              {cycles.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.is_default_active ? '★ ' : ''}
-                  {c.code} — {c.cycle_type} ({c.status.replace('_', ' ')})
-                </option>
-              ))}
+              {activeCyclesGroup.length > 0 && (
+                <optgroup label={`Active Cycles (${activeCyclesGroup.length})`}>
+                  {activeCyclesGroup.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.is_default_active ? '★ ' : ''}
+                      {c.code} — {c.name} ({c.status.replace('_', ' ')})
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {archivedCyclesGroup.length > 0 && (
+                <optgroup label={`Archived / Historical (${archivedCyclesGroup.length})`}>
+                  {archivedCyclesGroup.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      [Archived] {c.code} — {c.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </div>
         )}

@@ -8,7 +8,7 @@ import {
   CheckCircle2,
   RefreshCw,
 } from 'lucide-react'
-import { supabase } from '@/services/supabase'
+import { supabase, fetchAllRows } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import type {
   EligibilityStatus,
@@ -72,27 +72,31 @@ export function HallTicketsTab({ institutionId, cycle, canIssue, canPrint }: Pro
     enabled: Boolean(cycle?.id),
     queryFn: async () => {
       const [ticketsRes, slotsRes] = await Promise.all([
-        supabase
-          .from('hall_tickets')
-          .select(`
-            id, institution_id, exam_cycle_id, registration_id, student_id,
-            ticket_number, verification_code, status, withheld_reason,
-            eligible_course_count, print_count, last_printed_at, issued_at,
-            students (registration_number, full_name, photo_url),
-            exam_registrations (
-              registration_type, payment_status, program_id,
-              programs (code, name),
-              academic_periods (name),
-              student_enrollments (academic_sections (section_name)),
-              exam_registration_courses (
-                course_id, attempt_number, registration_category, is_online_exempt, eligibility_status,
-                course_catalog (course_code, title)
+        fetchAllRows<Record<string, unknown>>((from, to) =>
+          supabase
+            .from('hall_tickets')
+            .select(`
+              id, institution_id, exam_cycle_id, registration_id, student_id,
+              ticket_number, verification_code, status, withheld_reason,
+              eligible_course_count, print_count, last_printed_at, issued_at,
+              students (registration_number, full_name, photo_url),
+              exam_registrations (
+                registration_type, payment_status, program_id,
+                programs (code, name),
+                academic_periods (name),
+                student_enrollments (academic_sections (section_name)),
+                exam_registration_courses (
+                  course_id, attempt_number, registration_category, is_online_exempt, eligibility_status,
+                  course_catalog (course_code, title)
+                )
               )
-            )
-          `)
-          .eq('institution_id', institutionId)
-          .eq('exam_cycle_id', cycle!.id)
-          .order('ticket_number', { ascending: true }),
+            `)
+            .eq('institution_id', institutionId)
+            .eq('exam_cycle_id', cycle!.id)
+            .order('ticket_number', { ascending: true })
+            .order('id', { ascending: true })
+            .range(from, to)
+        ).then((data) => ({ data, error: null as Error | null })),
         supabase
           .from('exam_timetable_slots')
           .select('course_id, exam_date, session_code, start_time, end_time, is_omr_exam')

@@ -13,7 +13,7 @@ import {
   Lock,
   CheckCircle2,
 } from 'lucide-react'
-import { supabase } from '@/services/supabase'
+import { supabase, fetchAllRows } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import type {
   AllotmentRunStatus,
@@ -196,24 +196,26 @@ export function RoomAllotmentsTab({ institutionId, cycle, canManage, canDelete }
       const courseIds = activeSession!.courses.map((c) => c.course_id)
       const omrLookup = new Map(activeSession!.courses.map((c) => [c.course_id, c.is_omr_exam]))
 
-      const { data, error } = await supabase
-        .from('exam_registration_courses')
-        .select(`
-          id, registration_id, student_id, course_id, is_online_exempt, eligibility_status,
-          course_catalog (course_code, title),
-          exam_registrations!inner (
-            id, status, program_id,
-            students (registration_number, full_name),
-            programs (code)
-          )
-        `)
-        .eq('institution_id', institutionId)
-        .eq('exam_cycle_id', cycle!.id)
-        .in('course_id', courseIds)
-        .eq('is_online_exempt', false)
-        .eq('eligibility_status', 'ELIGIBLE')
-
-      if (error) throw error
+      const data = await fetchAllRows<Record<string, unknown>>((from, to) =>
+        supabase
+          .from('exam_registration_courses')
+          .select(`
+            id, registration_id, student_id, course_id, is_online_exempt, eligibility_status,
+            course_catalog (course_code, title),
+            exam_registrations!inner (
+              id, status, program_id,
+              students (registration_number, full_name),
+              programs (code)
+            )
+          `)
+          .eq('institution_id', institutionId)
+          .eq('exam_cycle_id', cycle!.id)
+          .in('course_id', courseIds)
+          .eq('is_online_exempt', false)
+          .eq('eligibility_status', 'ELIGIBLE')
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
 
       const list: AllocationCandidate[] = []
       for (const row of data ?? []) {

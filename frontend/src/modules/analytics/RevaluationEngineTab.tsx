@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Papa from 'papaparse'
 import { Scale, UploadCloud, Download, CheckCircle2, AlertTriangle } from 'lucide-react'
-import { supabase } from '@/services/supabase'
+import { supabase, fetchAllRows } from '@/services/supabase'
 import type { ExamCycle } from '@/types/exams'
 import type { MarksAuditLogRow } from '@/types/analytics'
 import { cn } from '@/utils/cn'
@@ -29,15 +29,16 @@ export function RevaluationEngineTab({
     queryKey: ['marks_audit_log', institutionId, cycle?.id],
     enabled: Boolean(cycle?.id),
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('marks_audit_log')
-        .select('*')
-        .eq('institution_id', institutionId)
-        .eq('exam_cycle_id', cycle!.id)
-        .order('created_at', { ascending: false })
-        .limit(300)
-      if (error) throw error
-      return (data ?? []) as MarksAuditLogRow[]
+      return fetchAllRows<MarksAuditLogRow>((from, to) =>
+        supabase
+          .from('marks_audit_log')
+          .select('*')
+          .eq('institution_id', institutionId)
+          .eq('exam_cycle_id', cycle!.id)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, to)
+      )
     },
   })
 

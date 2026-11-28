@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Edit2, Trash2, X, Check, Clock, AlertTriangle } from 'lucide-react'
-import { supabase } from '@/services/supabase'
+import { supabase, fetchAllRows } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import type { CourseCatalogOption, ExamCycle, ExamSessionCode, ExamTimetableSlot } from '@/types/exams'
 
@@ -126,14 +126,17 @@ export function TimetableTab({ institutionId, cycle, canManage, canDelete }: Pro
     queryKey: ['exam_registered_course_ids', institutionId, cycle?.id],
     enabled: Boolean(cycle?.id),
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('exam_registration_courses')
-        .select('course_id')
-        .eq('institution_id', institutionId)
-        .eq('exam_cycle_id', cycle!.id)
-        .eq('is_online_exempt', false)
-        .eq('eligibility_status', 'ELIGIBLE')
-      if (error) throw error
+      const data = await fetchAllRows<{ course_id: string }>((from, to) =>
+        supabase
+          .from('exam_registration_courses')
+          .select('course_id')
+          .eq('institution_id', institutionId)
+          .eq('exam_cycle_id', cycle!.id)
+          .eq('is_online_exempt', false)
+          .eq('eligibility_status', 'ELIGIBLE')
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
       return Array.from(new Set((data ?? []).map((r) => r.course_id as string)))
     },
   })

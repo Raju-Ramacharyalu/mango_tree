@@ -12,7 +12,7 @@ import {
   BookOpen,
   AlertCircle,
 } from 'lucide-react'
-import { supabase } from '@/services/supabase'
+import { supabase, fetchAllRows } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import type {
   CourseCatalogOption,
@@ -213,25 +213,28 @@ export function RegistrationsTab({ institutionId, cycle, canManage, canDelete }:
     queryKey: ['exam_registrations', institutionId, cycle?.id],
     enabled: Boolean(cycle?.id),
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('exam_registrations')
-        .select(`
-          id, institution_id, exam_cycle_id, student_id, enrollment_id, program_id, academic_period_id,
-          registration_type, status, application_fee, grade_card_fee, subject_fee_total, late_fee, total_fee,
-          payment_status, payment_reference, paid_at, approved_at, remarks, created_at,
-          students (registration_number, full_name),
-          programs (code, name),
-          academic_periods (name),
-          exam_registration_courses (
-            id, registration_id, course_id, attempt_number, registration_category,
-            is_online_exempt, subject_fee, eligibility_status,
-            course_catalog (course_code, title)
-          )
-        `)
-        .eq('institution_id', institutionId)
-        .eq('exam_cycle_id', cycle!.id)
-        .order('created_at', { ascending: false })
-      if (error) throw error
+      const data = await fetchAllRows<Record<string, unknown>>((from, to) =>
+        supabase
+          .from('exam_registrations')
+          .select(`
+            id, institution_id, exam_cycle_id, student_id, enrollment_id, program_id, academic_period_id,
+            registration_type, status, application_fee, grade_card_fee, subject_fee_total, late_fee, total_fee,
+            payment_status, payment_reference, paid_at, approved_at, remarks, created_at,
+            students (registration_number, full_name),
+            programs (code, name),
+            academic_periods (name),
+            exam_registration_courses (
+              id, registration_id, course_id, attempt_number, registration_category,
+              is_online_exempt, subject_fee, eligibility_status,
+              course_catalog (course_code, title)
+            )
+          `)
+          .eq('institution_id', institutionId)
+          .eq('exam_cycle_id', cycle!.id)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
 
       return (data ?? []).map((row) => {
         const stu = unwrap(row.students as { registration_number: string; full_name: string } | { registration_number: string; full_name: string }[] | null)
@@ -431,24 +434,35 @@ export function RegistrationsTab({ institutionId, cycle, canManage, canDelete }:
       const prog = programs.find((p) => p.id === bulkProgramId)
       const rule = resolveFeeRule(feeRules, cycle, prog?.program_level ?? null)
 
-      const { data: enrollments, error: enrErr } = await supabase
-        .from('student_enrollments')
-        .select('id, student_id, program_id, current_period_id')
-        .eq('institution_id', institutionId)
-        .eq('program_id', bulkProgramId)
-        .eq('current_period_id', bulkPeriodId)
-        .eq('enrollment_status', 'ACTIVE')
-        .eq('is_current', true)
-      if (enrErr) throw enrErr
+      const enrollments = await fetchAllRows<{
+        id: string
+        student_id: string
+        program_id: string
+        current_period_id: string | null
+      }>((from, to) =>
+        supabase
+          .from('student_enrollments')
+          .select('id, student_id, program_id, current_period_id')
+          .eq('institution_id', institutionId)
+          .eq('program_id', bulkProgramId)
+          .eq('current_period_id', bulkPeriodId)
+          .eq('enrollment_status', 'ACTIVE')
+          .eq('is_current', true)
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
       if (!enrollments || enrollments.length === 0) {
         throw new Error('No ACTIVE student enrollments found for the selected Program and Period.')
       }
 
-      const { data: existing, error: exErr } = await supabase
-        .from('exam_registrations')
-        .select('student_id')
-        .eq('exam_cycle_id', cycle.id)
-      if (exErr) throw exErr
+      const existing = await fetchAllRows<{ student_id: string }>((from, to) =>
+        supabase
+          .from('exam_registrations')
+          .select('student_id')
+          .eq('exam_cycle_id', cycle.id)
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
       const existingSet = new Set((existing ?? []).map((r) => r.student_id as string))
 
       const toInsert = enrollments.filter((e) => !existingSet.has(e.student_id as string))

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Printer, Download, FileSpreadsheet, ClipboardCheck, LayoutGrid, FileText } from 'lucide-react'
-import { supabase } from '@/services/supabase'
+import { supabase, fetchAllRows } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import type {
   AttendanceStatus,
@@ -94,22 +94,25 @@ export function ExamDayFormsTab({ institutionId, institutionName, cycle, canMana
     queryKey: ['exam_seat_allotments', institutionId, cycle?.id, activeRun?.id],
     enabled: Boolean(activeRun?.id),
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('exam_seat_allotments')
-        .select(`
-          id, institution_id, exam_cycle_id, allotment_run_id, room_id, exam_date, session_code,
-          seat_number, seat_label, student_id, registration_id, registration_course_id,
-          course_id, program_id, effective_course_code, is_omr_exam,
-          attendance_status, booklet_number, remarks,
-          exam_rooms (room_number, room_name, block_name, floor_label, remarks),
-          students (registration_number, full_name),
-          course_catalog (course_code, title),
-          programs (code, name)
-        `)
-        .eq('institution_id', institutionId)
-        .eq('allotment_run_id', activeRun!.id)
-        .order('seat_number', { ascending: true })
-      if (error) throw error
+      const data = await fetchAllRows<Record<string, unknown>>((from, to) =>
+        supabase
+          .from('exam_seat_allotments')
+          .select(`
+            id, institution_id, exam_cycle_id, allotment_run_id, room_id, exam_date, session_code,
+            seat_number, seat_label, student_id, registration_id, registration_course_id,
+            course_id, program_id, effective_course_code, is_omr_exam,
+            attendance_status, booklet_number, remarks,
+            exam_rooms (room_number, room_name, block_name, floor_label, remarks),
+            students (registration_number, full_name),
+            course_catalog (course_code, title),
+            programs (code, name)
+          `)
+          .eq('institution_id', institutionId)
+          .eq('allotment_run_id', activeRun!.id)
+          .order('seat_number', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
 
       return (data ?? [])
         .map((row) => {

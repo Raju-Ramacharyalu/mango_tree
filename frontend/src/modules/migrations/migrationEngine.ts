@@ -22,6 +22,7 @@ export async function fetchAllInstitutionRows<T extends Record<string, unknown>>
       .from(table)
       .select(selectColumns)
       .eq('institution_id', institutionId)
+      .order('id', { ascending: true })
       .range(start, start + step - 1)
     if (filterDeleted) {
       query = query.is('deleted_at', null)
