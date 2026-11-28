@@ -87,6 +87,31 @@ function normalizeRoleDescriptor(raw: RawInstitutionRole): RoleDescriptor {
   }
 }
 
+const CYCLE_STORAGE_PREFIX = 'mt_active_cycle_'
+
+function readStoredCycleId(institutionId: string | null): string | null {
+  if (!institutionId || typeof window === 'undefined') return null
+  try {
+    return window.localStorage.getItem(`${CYCLE_STORAGE_PREFIX}${institutionId}`) || null
+  } catch {
+    return null
+  }
+}
+
+function writeStoredCycleId(institutionId: string | null, cycleId: string | null): void {
+  if (!institutionId || typeof window === 'undefined') return
+  try {
+    const key = `${CYCLE_STORAGE_PREFIX}${institutionId}`
+    if (cycleId) {
+      window.localStorage.setItem(key, cycleId)
+    } else {
+      window.localStorage.removeItem(key)
+    }
+  } catch {
+    // Ignore storage errors in private browsing
+  }
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   session: null,
   profile: null,
@@ -207,12 +232,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       const validPreferred = memberships.find((m) => m.institution_id === preferredInstId)?.institution_id
       const defaultInst = memberships.find((m) => m.is_default)?.institution_id ?? memberships[0]?.institution_id ?? null
 
+      const resolvedInstId = isInitialLoad
+        ? (validPreferred ?? defaultInst)
+        : (get().activeInstitutionId ?? defaultInst)
+      const restoredCycleId = isInitialLoad
+        ? readStoredCycleId(resolvedInstId)
+        : (get().activeExamCycleId ?? readStoredCycleId(resolvedInstId))
+
       set({
         profile: (profileRes.data as UserProfile | null) ?? null,
         platformRoles,
         memberships,
         context: isInitialLoad ? initialContext : get().context,
-        activeInstitutionId: isInitialLoad ? (validPreferred ?? defaultInst) : (get().activeInstitutionId ?? defaultInst),
+        activeInstitutionId: resolvedInstId,
+        activeExamCycleId: restoredCycleId,
         isLoadingAuth: false,
       })
     } catch (err) {
@@ -233,13 +266,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!valid) return
     set({
       activeInstitutionId: institutionId,
-      activeExamCycleId: null,
+      activeExamCycleId: readStoredCycleId(institutionId),
       context: 'INSTITUTION',
       previewTier: 'ALL',
     })
   },
 
   setActiveExamCycle: (cycleId) => {
+    writeStoredCycleId(get().activeInstitutionId, cycleId)
     set({ activeExamCycleId: cycleId })
   },
 
