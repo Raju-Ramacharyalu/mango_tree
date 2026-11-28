@@ -52,6 +52,8 @@ interface AppState {
   memberships: UserMembership[]
   context: WorkspaceContext
   activeInstitutionId: string | null
+  activeAcademicYear: string
+  activeTerm: 'ODD' | 'EVEN'
   activeExamCycleId: string | null
   previewTier: AdminPreviewTier
   isLoadingAuth: boolean
@@ -59,6 +61,7 @@ interface AppState {
   initializeSession: (session: Session | null) => Promise<void>
   setContext: (ctx: WorkspaceContext) => void
   setActiveInstitution: (institutionId: string) => void
+  setActiveAcademicTerm: (academicYear: string, term: 'ODD' | 'EVEN') => void
   setActiveExamCycle: (cycleId: string | null) => void
   setPreviewTier: (tier: AdminPreviewTier) => void
   signOut: () => Promise<void>
@@ -112,6 +115,35 @@ function writeStoredCycleId(institutionId: string | null, cycleId: string | null
   }
 }
 
+const TERM_STORAGE_PREFIX = 'mt_active_term_'
+
+function readStoredAcademicTerm(institutionId: string | null): { academicYear: string; term: 'ODD' | 'EVEN' } | null {
+  if (!institutionId || typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(`${TERM_STORAGE_PREFIX}${institutionId}`)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { academicYear?: string; term?: string }
+    if (parsed.academicYear && (parsed.term === 'ODD' || parsed.term === 'EVEN')) {
+      return { academicYear: parsed.academicYear, term: parsed.term }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function writeStoredAcademicTerm(institutionId: string | null, academicYear: string, term: 'ODD' | 'EVEN'): void {
+  if (!institutionId || typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(
+      `${TERM_STORAGE_PREFIX}${institutionId}`,
+      JSON.stringify({ academicYear, term })
+    )
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   session: null,
   profile: null,
@@ -119,6 +151,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   memberships: [],
   context: 'INSTITUTION',
   activeInstitutionId: null,
+  activeAcademicYear: '2026-27',
+  activeTerm: 'ODD',
   activeExamCycleId: null,
   previewTier: 'ALL',
   isLoadingAuth: true,
@@ -238,6 +272,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const restoredCycleId = isInitialLoad
         ? readStoredCycleId(resolvedInstId)
         : (get().activeExamCycleId ?? readStoredCycleId(resolvedInstId))
+      const storedTerm = readStoredAcademicTerm(resolvedInstId)
 
       set({
         profile: (profileRes.data as UserProfile | null) ?? null,
@@ -245,6 +280,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         memberships,
         context: isInitialLoad ? initialContext : get().context,
         activeInstitutionId: resolvedInstId,
+        activeAcademicYear: storedTerm?.academicYear ?? get().activeAcademicYear,
+        activeTerm: storedTerm?.term ?? get().activeTerm,
         activeExamCycleId: restoredCycleId,
         isLoadingAuth: false,
       })
@@ -264,12 +301,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   setActiveInstitution: (institutionId) => {
     const valid = get().memberships.some((m) => m.institution_id === institutionId)
     if (!valid) return
+    const storedTerm = readStoredAcademicTerm(institutionId)
     set({
       activeInstitutionId: institutionId,
+      activeAcademicYear: storedTerm?.academicYear ?? '2026-27',
+      activeTerm: storedTerm?.term ?? 'ODD',
       activeExamCycleId: readStoredCycleId(institutionId),
       context: 'INSTITUTION',
       previewTier: 'ALL',
     })
+  },
+
+  setActiveAcademicTerm: (academicYear, term) => {
+    const cleanAy = academicYear.trim() || '2026-27'
+    writeStoredAcademicTerm(get().activeInstitutionId, cleanAy, term)
+    set({ activeAcademicYear: cleanAy, activeTerm: term })
   },
 
   setActiveExamCycle: (cycleId) => {

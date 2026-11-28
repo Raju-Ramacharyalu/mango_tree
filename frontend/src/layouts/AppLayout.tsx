@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   LayoutDashboard,
@@ -16,6 +16,7 @@ import {
   X,
   Globe,
   Calendar,
+  BookOpen,
   Eye,
   Store,
   Landmark,
@@ -52,6 +53,10 @@ const navItems = [
   { to: '/audit-logs', label: 'Audit Logs', icon: ShieldCheck },
 ]
 
+const EXAM_ROUTES = ['/exams', '/analytics', '/operations', '/qp-vault']
+const ACADEMIC_ROUTES = ['/academics', '/governance', '/faculty-portal', '/front-office']
+const DEFAULT_ACADEMIC_YEARS = ['2027-28', '2026-27', '2025-26', '2024-25']
+
 const TIER_BADGE_STYLES: Record<AdminPreviewTier, string> = {
   ALL: 'bg-indigo-50 text-indigo-700 border-indigo-200',
   MANAGEMENT: 'bg-amber-50 text-amber-800 border-amber-200',
@@ -69,22 +74,61 @@ function isArchivedCycle(cycle: ExamCycle): boolean {
 }
 
 export function AppLayout() {
+  const location = useLocation()
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>('ALL')
+  const [selectedCycleAy, setSelectedCycleAy] = useState<string>('ALL')
   const {
     profile,
     platformRoles,
     memberships,
     context,
     activeInstitutionId,
+    activeAcademicYear,
+    activeTerm,
     activeExamCycleId,
     previewTier,
     setContext,
     setActiveInstitution,
+    setActiveAcademicTerm,
     setActiveExamCycle,
     setPreviewTier,
     signOut,
   } = useAppStore()
+
+  const pathname = location.pathname
+  const isDashboardRoute = pathname === '/'
+  const isExamRoute = EXAM_ROUTES.some((r) => pathname.startsWith(r))
+  const isAcademicRoute = ACADEMIC_ROUTES.some((r) => pathname.startsWith(r))
+  const showAcademicContext = isAcademicRoute || isDashboardRoute || (!isExamRoute)
+  const showExamContext = isExamRoute || isDashboardRoute
+
+  const { data: instAcademicDefaults } = useQuery({
+    queryKey: ['institution_academic_defaults', activeInstitutionId],
+    enabled: context === 'INSTITUTION' && Boolean(activeInstitutionId),
+    staleTime: 120_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('institution_settings')
+        .select('setting_key, setting_value')
+        .eq('institution_id', activeInstitutionId!)
+        .in('setting_key', ['active_academic_year', 'active_term'])
+      if (error) throw error
+      const map = new Map((data ?? []).map((r) => [r.setting_key as string, r.setting_value]))
+      const ay = typeof map.get('active_academic_year') === 'string' ? (map.get('active_academic_year') as string) : null
+      const termRaw = typeof map.get('active_term') === 'string' ? String(map.get('active_term')).toUpperCase() : null
+      const term: 'ODD' | 'EVEN' | null = termRaw === 'EVEN' ? 'EVEN' : termRaw === 'ODD' ? 'ODD' : null
+      return { ay, term }
+    },
+  })
+
+  // Hydrate institution default AY/Term only if user has not saved a custom selection yet
+  useEffect(() => {
+    if (!activeInstitutionId || !instAcademicDefaults?.ay) return
+    const stored = window.localStorage.getItem(`mt_active_term_${activeInstitutionId}`)
+    if (!stored) {
+      setActiveAcademicTerm(instAcademicDefaults.ay, instAcademicDefaults.term ?? activeTerm)
+    }
+  }, [activeInstitutionId, instAcademicDefaults, activeTerm, setActiveAcademicTerm])
 
   const { data: examCycles = [] } = useQuery<ExamCycle[]>({
     queryKey: ['exam_cycles', activeInstitutionId],
@@ -118,10 +162,15 @@ export function AppLayout() {
     }
   }, [context, activeInstitutionId, examCycles, activeExamCycleId, setActiveExamCycle])
 
-  const academicYears = useMemo(() => {
+  const cycleAcademicYears = useMemo(() => {
     const yrs = Array.from(new Set(examCycles.map(getCycleYear)))
     return yrs.sort((a, b) => b.localeCompare(a))
   }, [examCycles])
+
+  const academicYearOptions = useMemo(() => {
+    const set = new Set<string>([...DEFAULT_ACADEMIC_YEARS, activeAcademicYear, ...cycleAcademicYears.filter((y) => y !== 'Unspecified')])
+    return Array.from(set).sort((a, b) => b.localeCompare(a))
+  }, [activeAcademicYear, cycleAcademicYears])
 
   const activeCycle = examCycles.find((c) => c.id === activeExamCycleId) ?? null
   const defaultLiveCycle = useMemo(
@@ -133,17 +182,17 @@ export function AppLayout() {
   )
 
   useEffect(() => {
-    if (!activeCycle || selectedAcademicYear === 'ALL') return
+    if (!activeCycle || selectedCycleAy === 'ALL') return
     const cycleYear = getCycleYear(activeCycle)
-    if (cycleYear !== selectedAcademicYear) {
-      setSelectedAcademicYear(cycleYear)
+    if (cycleYear !== selectedCycleAy) {
+      setSelectedCycleAy(cycleYear)
     }
-  }, [activeCycle, selectedAcademicYear])
+  }, [activeCycle, selectedCycleAy])
 
   const filteredCycles = useMemo(() => {
-    if (selectedAcademicYear === 'ALL') return examCycles
-    return examCycles.filter((c) => getCycleYear(c) === selectedAcademicYear)
-  }, [examCycles, selectedAcademicYear])
+    if (selectedCycleAy === 'ALL') return examCycles
+    return examCycles.filter((c) => getCycleYear(c) === selectedCycleAy)
+  }, [examCycles, selectedCycleAy])
 
   const activeCycleGroup = useMemo(
     () => filteredCycles.filter((c) => !isArchivedCycle(c)),
@@ -154,8 +203,8 @@ export function AppLayout() {
     [filteredCycles]
   )
 
-  const handleAcademicYearChange = (nextYear: string) => {
-    setSelectedAcademicYear(nextYear)
+  const handleCycleAyChange = (nextYear: string) => {
+    setSelectedCycleAy(nextYear)
     if (nextYear === 'ALL') return
     if (activeCycle && getCycleYear(activeCycle) === nextYear) return
     const inYear = examCycles.filter((c) => getCycleYear(c) === nextYear)
@@ -237,7 +286,7 @@ export function AppLayout() {
             <select
               value={activeInstitutionId ?? ''}
               onChange={(e) => {
-                setSelectedAcademicYear('ALL')
+                setSelectedCycleAy('ALL')
                 setActiveInstitution(e.target.value)
               }}
               className="w-full rounded-md bg-slate-800 border border-slate-700 px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -250,22 +299,65 @@ export function AppLayout() {
             </select>
           )}
 
-          {context === 'INSTITUTION' && examCycles.length > 0 && (
+          {/* ACADEMIC TERM CONTEXT: AY + ODD/EVEN (Academics, BOS, Allocations, CIE, Front Office, Dashboard) */}
+          {context === 'INSTITUTION' && showAcademicContext && (
+            <div className="pt-1 space-y-1.5 rounded-md bg-indigo-950/60 border border-indigo-800/70 p-2">
+              <label className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-indigo-200 font-semibold px-0.5">
+                <BookOpen className="h-3 w-3 text-indigo-400" />
+                Academic Term Context
+              </label>
+              <div className="grid grid-cols-5 gap-1.5">
+                <select
+                  aria-label="Academic Year"
+                  value={activeAcademicYear}
+                  onChange={(e) => setActiveAcademicTerm(e.target.value, activeTerm)}
+                  className="col-span-3 rounded-md bg-slate-900 border border-indigo-700/70 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                >
+                  {academicYearOptions.map((yr) => (
+                    <option key={yr} value={yr}>
+                      AY {yr}
+                    </option>
+                  ))}
+                </select>
+                <div className="col-span-2 grid grid-cols-2 rounded-md bg-slate-900 border border-indigo-700/70 p-0.5 text-[10px] font-semibold">
+                  {(['ODD', 'EVEN'] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setActiveAcademicTerm(activeAcademicYear, t)}
+                      className={cn(
+                        'rounded py-0.5 transition',
+                        activeTerm === t ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                      )}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <p className="text-[10px] text-indigo-300/80 px-0.5">
+                Governs BOS, Allocations, CIE &amp; Course Reg
+              </p>
+            </div>
+          )}
+
+          {/* EXAMINATION CYCLE CONTEXT: Strictly for Examination routes + Dashboard */}
+          {context === 'INSTITUTION' && showExamContext && examCycles.length > 0 && (
             <div className="pt-1 space-y-1.5 rounded-md bg-slate-800/60 border border-slate-700/80 p-2">
               <div className="flex items-center justify-between px-0.5">
                 <label className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-300 font-semibold">
-                  <Calendar className="h-3 w-3 text-indigo-400" />
-                  Cycle Context Selector
+                  <Calendar className="h-3 w-3 text-emerald-400" />
+                  Exam Cycle Context
                 </label>
-                {academicYears.length > 1 && (
+                {cycleAcademicYears.length > 1 && (
                   <select
-                    aria-label="Academic Year"
-                    value={selectedAcademicYear}
-                    onChange={(e) => handleAcademicYearChange(e.target.value)}
+                    aria-label="Filter Exam Cycles by Academic Year"
+                    value={selectedCycleAy}
+                    onChange={(e) => handleCycleAyChange(e.target.value)}
                     className="rounded bg-slate-900 border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   >
                     <option value="ALL">All AY</option>
-                    {academicYears.map((yr) => (
+                    {cycleAcademicYears.map((yr) => (
                       <option key={yr} value={yr}>
                         AY {yr}
                       </option>
@@ -282,7 +374,7 @@ export function AppLayout() {
                   'w-full rounded-md bg-slate-900 border px-2 py-1.5 text-xs focus:outline-none focus:ring-1',
                   activeCycleIsArchived
                     ? 'border-amber-500/60 text-amber-200 focus:ring-amber-400'
-                    : 'border-slate-700 text-indigo-100 focus:ring-indigo-500'
+                    : 'border-slate-700 text-emerald-100 focus:ring-emerald-500'
                 )}
               >
                 {activeCycleGroup.length > 0 && (
@@ -401,11 +493,12 @@ export function AppLayout() {
           </div>
         )}
 
-        {context === 'INSTITUTION' && activeCycle && activeCycleIsArchived && (
+        {/* Archived banner ONLY on Examination routes */}
+        {context === 'INSTITUTION' && isExamRoute && activeCycle && activeCycleIsArchived && (
           <div className="bg-amber-50 border-b border-amber-200 px-4 lg:px-6 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900">
             <span className="inline-flex items-center gap-1.5">
               <Archive className="h-3.5 w-3.5 text-amber-700 shrink-0" />
-              <strong>Archived Cycle Context (Read-Only):</strong> Viewing{' '}
+              <strong>Archived Exam Cycle (Read-Only):</strong> Viewing{' '}
               <strong>
                 {activeCycle.code} — {activeCycle.name}
               </strong>{' '}
@@ -448,7 +541,13 @@ export function AppLayout() {
                   {activeMembership.institution.name}
                 </span>
               )}
-              {context === 'INSTITUTION' && activeCycle && (
+              {context === 'INSTITUTION' && showAcademicContext && (
+                <span className="hidden md:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-medium shrink-0">
+                  <BookOpen className="h-3 w-3 shrink-0" />
+                  AY {activeAcademicYear} · {activeTerm}
+                </span>
+              )}
+              {context === 'INSTITUTION' && showExamContext && activeCycle && (
                 <span
                   title={`${activeCycle.code} — ${activeCycle.name}`}
                   className={cn(

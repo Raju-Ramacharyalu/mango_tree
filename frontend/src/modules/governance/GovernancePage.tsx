@@ -26,12 +26,13 @@ function unwrap<T>(val: T | T[] | null | undefined): T | null {
 
 export function GovernancePage() {
   const [activeTab, setActiveTab] = useState<GovernanceTab>('curriculum')
-  const [academicYear, setAcademicYear] = useState('2026-27')
-  const [term, setTerm] = useState<'ODD' | 'EVEN'>('ODD')
 
   const {
     context,
     activeInstitutionId,
+    activeAcademicYear: academicYear,
+    activeTerm: term,
+    setActiveAcademicTerm,
     activeExamCycleId,
     platformRoles,
     memberships,
@@ -234,12 +235,12 @@ export function GovernancePage() {
           <input
             type="text"
             value={academicYear}
-            onChange={(e) => setAcademicYear(e.target.value)}
+            onChange={(e) => setActiveAcademicTerm(e.target.value, term)}
             className="w-24 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium"
           />
           <select
             value={term}
-            onChange={(e) => setTerm(e.target.value as 'ODD' | 'EVEN')}
+            onChange={(e) => setActiveAcademicTerm(academicYear, e.target.value as 'ODD' | 'EVEN')}
             className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium"
           >
             <option value="ODD">ODD Term</option>
