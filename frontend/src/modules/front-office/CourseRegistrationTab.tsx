@@ -267,19 +267,21 @@ export function CourseRegistrationTab({
     },
   })
 
+  const cleanAy = activeAcademicYear.trim()
+
   // 2. Fetch ALL Phase 1 academic_course_registrations for current AY + Term
-  const { data: termRegs = [], isLoading: loadingRegs } = useQuery<AcademicRegRow[]>({
-    queryKey: ['term_academic_course_regs', institutionId, activeAcademicYear, activeTerm],
+  const { data: termRegs = [], isLoading: loadingRegs, error: termRegsError } = useQuery<AcademicRegRow[]>({
+    queryKey: ['term_academic_course_regs', institutionId, cleanAy, activeTerm],
     queryFn: async () => {
       return fetchAllRows<AcademicRegRow>((from, to) =>
         supabase
           .from('academic_course_registrations')
-          .select('id, student_id, course_id, course_code, course_type, credits, semester_number, registration_source, submitted_by_student, submitted_at')
+          .select('*')
           .eq('institution_id', institutionId)
-          .eq('academic_year', activeAcademicYear)
+          .eq('academic_year', cleanAy)
           .eq('term', activeTerm)
           .eq('status', 'ACTIVE')
-          .order('id', { ascending: true })
+          .order('created_at', { ascending: true })
           .range(from, to)
       )
     },
@@ -646,7 +648,8 @@ export function CourseRegistrationTab({
       setNotice(
         `Auto-registered ${res.studentsCount} pending student(s) in ${filterBranch} Sem ${filterSem} (${res.rowCount} course entries saved). You can now Bulk Print Official Copies.`
       )
-      queryClient.invalidateQueries({ queryKey: ['term_academic_course_regs', institutionId, activeAcademicYear, activeTerm] })
+      queryClient.invalidateQueries({ queryKey: ['term_academic_course_regs', institutionId, cleanAy, activeTerm] })
+      queryClient.refetchQueries({ queryKey: ['term_academic_course_regs', institutionId, cleanAy, activeTerm] })
     },
     onError: (err) => setErrorMsg(extractErrorMessage(err, 'Auto-registration failed')),
   })
@@ -720,7 +723,8 @@ export function CourseRegistrationTab({
       setErrorMsg(null)
       setEditDeskOverride(false)
       setNotice(`Saved ${rows.length} courses for ${activeStudent?.registration_number} (${activeAcademicYear} ${activeTerm}).`)
-      queryClient.invalidateQueries({ queryKey: ['term_academic_course_regs', institutionId, activeAcademicYear, activeTerm] })
+      queryClient.invalidateQueries({ queryKey: ['term_academic_course_regs', institutionId, cleanAy, activeTerm] })
+      queryClient.refetchQueries({ queryKey: ['term_academic_course_regs', institutionId, cleanAy, activeTerm] })
       queryClient.invalidateQueries({ queryKey: ['desk_student_reg_ctx', institutionId, activeStudent?.registration_number] })
     },
     onError: (err) => setErrorMsg(extractErrorMessage(err, 'Single student registration failed')),
@@ -788,7 +792,8 @@ export function CourseRegistrationTab({
               (paritySkipped ? ` · ${paritySkipped} parity mismatch skipped` : '') +
               '.'
           )
-          queryClient.invalidateQueries({ queryKey: ['term_academic_course_regs', institutionId, activeAcademicYear, activeTerm] })
+          queryClient.invalidateQueries({ queryKey: ['term_academic_course_regs', institutionId, cleanAy, activeTerm] })
+      queryClient.refetchQueries({ queryKey: ['term_academic_course_regs', institutionId, cleanAy, activeTerm] })
         } catch (err) {
           setErrorMsg(extractErrorMessage(err, 'Bulk CSV import failed'))
         }
@@ -1117,9 +1122,10 @@ export function CourseRegistrationTab({
           <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> {notice}
         </div>
       )}
-      {errorMsg && (
+      {(errorMsg || termRegsError) && (
         <div className="flex items-center gap-2 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
-          <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" /> {errorMsg}
+          <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" />{' '}
+          {errorMsg || extractErrorMessage(termRegsError, 'Failed to read academic_course_registrations')}
         </div>
       )}
 

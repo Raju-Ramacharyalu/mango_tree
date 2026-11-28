@@ -161,7 +161,7 @@ export function StudentPortalPage() {
     }
   }, [activeInstitutionId, snapshot?.student])
 
-  const { data: courseRegCtx } = useQuery<StudentCourseRegContext>({
+  const { data: courseRegCtx, error: courseRegLoadError } = useQuery<StudentCourseRegContext>({
     queryKey: ['student_course_reg_ctx', activeInstitutionId, activePreviewUsn],
     enabled: context === 'INSTITUTION' && Boolean(activeInstitutionId),
     queryFn: async () => {
@@ -886,10 +886,17 @@ export function StudentPortalPage() {
             <span>{regNotice}</span>
           </div>
         )}
-        {regError && (
+        {(regError || courseRegLoadError) && (
           <div className="rounded-2xl bg-red-50 border border-red-200 p-3 text-xs text-red-700 font-semibold flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
-            <span>{regError}</span>
+            <span>
+              {regError ||
+                (courseRegLoadError instanceof Error
+                  ? courseRegLoadError.message
+                  : typeof (courseRegLoadError as unknown as { message?: unknown })?.message === 'string'
+                    ? String((courseRegLoadError as unknown as { message: string }).message)
+                    : 'Unable to load course registration window')}
+            </span>
           </div>
         )}
 
