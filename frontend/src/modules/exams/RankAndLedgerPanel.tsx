@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
-import { Trophy, FileSpreadsheet, Printer, Award } from 'lucide-react'
+import { Trophy, FileSpreadsheet, Printer, Award, FolderArchive } from 'lucide-react'
 import type { ExamCycle, ExamSemesterResultItem } from '@/types/exams'
 import {
   buildRankedStudentRows,
   exportA3MasterLedgerWorkbook,
+  exportSplitA3LedgersZip,
   exportRankListWorkbook,
   type ClassAward,
   type ExtendedCourseRow,
@@ -48,6 +49,7 @@ export function RankAndLedgerPanel({
   const [levelFilter, setLevelFilter] = useState<'ALL' | 'UG' | 'PG'>('ALL')
   const [excludeGraced, setExcludeGraced] = useState(true)
   const [topLimit, setTopLimit] = useState('25')
+  const [exporting, setExporting] = useState<'NONE' | 'XLSX' | 'ZIP' | 'RANK'>('NONE')
 
   const branches = useMemo(
     () => Array.from(new Set(semesterResults.map((s) => s.program_code))).sort(),
@@ -226,32 +228,64 @@ export function RankAndLedgerPanel({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            disabled={scopedSemester.length === 0}
-            onClick={() =>
-              exportA3MasterLedgerWorkbook({
-                institutionName,
-                cycle,
-                semesterResults: scopedSemester,
-                courseResults,
-                programFilter: branchFilter,
-              })
-            }
-            className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
+            disabled={scopedSemester.length === 0 || exporting !== 'NONE'}
+            onClick={async () => {
+              setExporting('ZIP')
+              try {
+                await exportSplitA3LedgersZip({
+                  institutionName,
+                  cycle,
+                  semesterResults: scopedSemester,
+                  courseResults,
+                  programFilter: branchFilter,
+                })
+              } finally {
+                setExporting('NONE')
+              }
+            }}
+            className="inline-flex items-center gap-1.5 rounded-md bg-emerald-700 px-3 py-1.5 font-semibold text-white hover:bg-emerald-800 disabled:opacity-40"
           >
-            <FileSpreadsheet className="h-3.5 w-3.5" />
-            Export A3 Master Ledger (.xlsx)
+            <FolderArchive className="h-3.5 w-3.5" />
+            {exporting === 'ZIP' ? 'Packaging ZIP...' : 'Export Split A3 Ledgers (.zip)'}
           </button>
           <button
             type="button"
-            disabled={meritOnly.length === 0}
-            onClick={() =>
-              exportRankListWorkbook({
-                institutionName,
-                cycle,
-                rows: meritOnly,
-                branchLabel: branchFilter,
-              })
-            }
+            disabled={scopedSemester.length === 0 || exporting !== 'NONE'}
+            onClick={async () => {
+              setExporting('XLSX')
+              try {
+                await exportA3MasterLedgerWorkbook({
+                  institutionName,
+                  cycle,
+                  semesterResults: scopedSemester,
+                  courseResults,
+                  programFilter: branchFilter,
+                })
+              } finally {
+                setExporting('NONE')
+              }
+            }}
+            className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5" />
+            {exporting === 'XLSX' ? 'Building A3...' : 'Export Combined A3 (.xlsx)'}
+          </button>
+          <button
+            type="button"
+            disabled={meritOnly.length === 0 || exporting !== 'NONE'}
+            onClick={async () => {
+              setExporting('RANK')
+              try {
+                await exportRankListWorkbook({
+                  institutionName,
+                  cycle,
+                  rows: meritOnly,
+                  branchLabel: branchFilter,
+                })
+              } finally {
+                setExporting('NONE')
+              }
+            }}
             className="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 bg-indigo-50 px-3 py-1.5 font-semibold text-indigo-800 hover:bg-indigo-100 disabled:opacity-40"
           >
             <Award className="h-3.5 w-3.5" />
