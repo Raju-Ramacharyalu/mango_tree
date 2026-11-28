@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Smartphone,
   Monitor,
@@ -16,6 +16,8 @@ import {
   User,
   Bell,
   Download,
+  ClipboardCheck,
+  Sparkles,
 } from 'lucide-react'
 import { supabase } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
@@ -30,9 +32,47 @@ import {
   signPrivateAssets,
   signStudentPhotosWithFallback,
 } from '@/modules/exams/printBranding'
+import { printOfficialCourseRegistrationForms } from '@/modules/front-office/courseRegPrint'
 import { cn } from '@/utils/cn'
 
-type PortalSection = 'home' | 'results' | 'exams' | 'hall-ticket' | 'subjects' | 'profile'
+type PortalSection = 'home' | 'course-reg' | 'results' | 'exams' | 'hall-ticket' | 'subjects' | 'profile'
+
+interface StudentCourseRegContext {
+  found: boolean
+  student?: {
+    id: string
+    registration_number: string
+    admission_number: string | null
+    full_name: string
+    photo_url: string | null
+    photo_pin: string | null
+    program_code: string
+    program_level: string
+    current_sem: number
+    scheme_batch: number | null
+    student_category: string
+    specialization_code: string
+  }
+  active_window?: {
+    id: string
+    title: string
+    academic_year: string
+    term: string
+    closes_at: string | null
+    instructions: string | null
+  } | null
+  curriculum?: { code: string; name: string; scheme_batch: number | null } | null
+  target_academic_year: string
+  target_term: string
+  has_submitted: boolean
+  submitted_at: string | null
+  is_high_priority_pending: boolean
+  mandatory_courses: Array<{ course_id: string; course_code: string; course_title: string; credits: number; course_type: string }>
+  lateral_courses: Array<{ course_id: string; course_code: string; course_title: string; credits: number; course_type: string }>
+  pe_courses: Array<{ course_id: string; course_code: string; course_title: string; credits: number; course_type: string }>
+  oe_courses: Array<{ course_id: string; course_code: string; course_title: string; credits: number; course_type: string; branch_code: string }>
+  submitted_courses: Array<{ course_id: string; course_code: string; course_title: string; credits: number; course_type: string }>
+}
 
 const NON_CREDIT_GRADES = new Set(['PP', 'NP', 'EX'])
 
@@ -72,7 +112,12 @@ export function StudentPortalPage() {
   const [activePreviewUsn, setActivePreviewUsn] = useState('')
   const [signedPhotoUrl, setSignedPhotoUrl] = useState<string | null>(null)
   const [isDesktopViewport, setIsDesktopViewport] = useState(() => window.innerWidth >= 768)
+  const queryClient = useQueryClient()
   const [viewMode, setViewMode] = useState<'MOBILE' | 'DESKTOP'>('MOBILE')
+  const [selectedPeId, setSelectedPeId] = useState('')
+  const [selectedOeId, setSelectedOeId] = useState('')
+  const [regNotice, setRegNotice] = useState<string | null>(null)
+  const [regError, setRegError] = useState<string | null>(null)
 
   useEffect(() => {
     const onResize = () => setIsDesktopViewport(window.innerWidth >= 768)
@@ -115,6 +160,53 @@ export function StudentPortalPage() {
       cancelled = true
     }
   }, [activeInstitutionId, snapshot?.student])
+
+  const { data: courseRegCtx } = useQuery<StudentCourseRegContext>({
+    queryKey: ['student_course_reg_ctx', activeInstitutionId, activePreviewUsn],
+    enabled: context === 'INSTITUTION' && Boolean(activeInstitutionId),
+    queryFn: async () => {
+      const { data, error: rpcErr } = await supabase.rpc('get_student_course_reg_context', {
+        p_institution_id: activeInstitutionId!,
+        p_preview_usn: activePreviewUsn.trim() || null,
+      })
+      if (rpcErr) throw rpcErr
+      return data as StudentCourseRegContext
+    },
+  })
+
+  const submitStudentRegMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeInstitutionId || !courseRegCtx?.active_window) {
+        throw new Error('No open Course Registration Window found.')
+      }
+      const { data, error: rpcErr } = await supabase.rpc('submit_student_course_registration', {
+        p_institution_id: activeInstitutionId,
+        p_window_id: courseRegCtx.active_window.id,
+        p_selected_pe_ids: selectedPeId ? [selectedPeId] : [],
+        p_selected_oe_ids: selectedOeId ? [selectedOeId] : [],
+        p_preview_usn: activePreviewUsn.trim() || null,
+      })
+      if (rpcErr) throw rpcErr
+      return data as { courses_registered: number; academic_year: string; term: string; semester_number: number }
+    },
+    onSuccess: (res) => {
+      setRegError(null)
+      setRegNotice(
+        `Course Registration submitted (${res.courses_registered} courses for Sem ${res.semester_number} · ${res.academic_year} ${res.term}). Download your Official Copy below.`
+      )
+      queryClient.invalidateQueries({ queryKey: ['student_course_reg_ctx', activeInstitutionId] })
+      queryClient.invalidateQueries({ queryKey: ['student_portal_snapshot', activeInstitutionId] })
+    },
+    onError: (err) => {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : typeof (err as { message?: unknown })?.message === 'string'
+            ? String((err as { message: string }).message)
+            : 'Submission failed'
+      setRegError(msg)
+    },
+  })
 
   // Group Consolidated Latest-Attempt Results cleanly by Curriculum Semester with per-semester SGPA, Credits & %
   const semesterGroups = useMemo(() => {
@@ -765,6 +857,178 @@ export function StudentPortalPage() {
     </div>
   )
 
+  const renderCourseRegContent = () => {
+    const win = courseRegCtx?.active_window ?? null
+    const regStu = courseRegCtx?.student
+    const submitted = Boolean(courseRegCtx?.has_submitted)
+    const mandatory = courseRegCtx?.mandatory_courses ?? []
+    const lateral = courseRegCtx?.lateral_courses ?? []
+    const peList = courseRegCtx?.pe_courses ?? []
+    const oeList = courseRegCtx?.oe_courses ?? []
+    const submittedList = courseRegCtx?.submitted_courses ?? []
+
+    const handleDownloadCopy = () => {
+      if (!activeInstitutionId || !regStu || submittedList.length === 0) return
+      printOfficialCourseRegistrationForms({
+        institutionId: activeInstitutionId,
+        institutionName: activeMembership?.institution.name,
+        academicYear: courseRegCtx?.target_academic_year || '2026-27',
+        term: courseRegCtx?.target_term || 'ODD',
+        items: [{ student: regStu, courses: submittedList }],
+      })
+    }
+
+    return (
+      <div className="space-y-3">
+        {regNotice && (
+          <div className="rounded-2xl bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-900 font-semibold flex items-start gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+            <span>{regNotice}</span>
+          </div>
+        )}
+        {regError && (
+          <div className="rounded-2xl bg-red-50 border border-red-200 p-3 text-xs text-red-700 font-semibold flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+            <span>{regError}</span>
+          </div>
+        )}
+
+        {submitted ? (
+          <div className="rounded-2xl bg-white border border-emerald-200 p-4 space-y-3 shadow-xs">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-xs font-extrabold text-emerald-800 flex items-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Semester {stu?.current_sem} Course Registration Completed
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  AY {courseRegCtx?.target_academic_year} ({courseRegCtx?.target_term}) · {submittedList.length} Courses
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleDownloadCopy}
+                className="inline-flex items-center gap-1 rounded-xl bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-amber-600 shrink-0"
+              >
+                <Printer className="h-3.5 w-3.5" /> Download Copy
+              </button>
+            </div>
+
+            <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl text-xs">
+              {submittedList.map((c) => (
+                <div key={c.course_id} className="px-3 py-2 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="font-mono font-bold text-slate-900">{c.course_code}</span>
+                    <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.2 text-[9px] font-semibold text-slate-600">
+                      {c.course_type}
+                    </span>
+                    <p className="text-[10px] text-slate-500 truncate">{c.course_title}</p>
+                  </div>
+                  <span className="font-mono font-semibold text-slate-700 shrink-0">{c.credits} Cr</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : !win ? (
+          <div className="rounded-2xl bg-white border border-slate-200 p-6 text-center space-y-1.5">
+            <ClipboardCheck className="h-7 w-7 text-slate-300 mx-auto" />
+            <p className="text-xs font-bold text-slate-800">No Open Course Registration Window</p>
+            <p className="text-[11px] text-slate-500">
+              When COE triggers Course Registration for Semester {stu?.current_sem}, your mandatory courses and elective
+              dropdowns will appear here automatically.
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-2xl bg-white border border-amber-300 p-4 space-y-3.5 shadow-xs">
+            <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-xs text-red-900">
+              <p className="font-extrabold">{win.title}</p>
+              {win.closes_at && (
+                <p className="text-[11px] font-semibold mt-0.5">Deadline: {win.closes_at.slice(0, 10)}</p>
+              )}
+              {win.instructions && <p className="text-[11px] mt-1 text-red-800">{win.instructions}</p>}
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-extrabold uppercase text-slate-700">
+                1. Mandatory Courses (Auto-Selected · {mandatory.length + lateral.length})
+              </p>
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl text-xs">
+                {[...mandatory, ...lateral].map((c) => (
+                  <div key={c.course_id} className="px-3 py-2 flex items-center justify-between gap-2 bg-emerald-50/30">
+                    <div className="min-w-0">
+                      <span className="font-mono font-bold text-slate-900">{c.course_code}</span>
+                      <span className="ml-1.5 rounded bg-emerald-100 px-1.5 py-0.2 text-[9px] font-bold text-emerald-800">
+                        {c.course_type}
+                      </span>
+                      <p className="text-[10px] text-slate-600 truncate">{c.course_title}</p>
+                    </div>
+                    <span className="font-mono text-[11px] text-slate-600 shrink-0">{c.credits} Cr</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {peList.length > 0 && (
+              <div className="space-y-1 text-xs">
+                <label className="block font-extrabold text-slate-800">
+                  2. Select Professional Elective (PE) *
+                </label>
+                <select
+                  value={selectedPeId}
+                  onChange={(e) => setSelectedPeId(e.target.value)}
+                  className="w-full rounded-xl border border-amber-300 bg-amber-50/30 px-3 py-2 text-xs font-semibold text-slate-900"
+                >
+                  <option value="">-- Choose Approved Professional Elective --</option>
+                  {peList.map((p) => (
+                    <option key={p.course_id} value={p.course_id}>
+                      {p.course_code} — {p.course_title} ({p.credits} Cr)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {oeList.length > 0 && (
+              <div className="space-y-1 text-xs">
+                <label className="block font-extrabold text-slate-800">
+                  {peList.length > 0 ? '3' : '2'}. Select Open Elective (OE) *
+                </label>
+                <select
+                  value={selectedOeId}
+                  onChange={(e) => setSelectedOeId(e.target.value)}
+                  className="w-full rounded-xl border border-amber-300 bg-amber-50/30 px-3 py-2 text-xs font-semibold text-slate-900"
+                >
+                  <option value="">-- Choose Approved Open Elective --</option>
+                  {oeList.map((o) => (
+                    <option key={o.course_id} value={o.course_id}>
+                      {o.course_code} [{o.branch_code}] — {o.course_title} ({o.credits} Cr)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <button
+              type="button"
+              disabled={
+                submitStudentRegMutation.isPending ||
+                (peList.length > 0 && !selectedPeId) ||
+                (oeList.length > 0 && !selectedOeId)
+              }
+              onClick={() => submitStudentRegMutation.mutate()}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-extrabold text-white hover:bg-indigo-700 disabled:opacity-40"
+            >
+              <Sparkles className="h-4 w-4" />
+              {submitStudentRegMutation.isPending
+                ? 'Submitting Registration...'
+                : 'Confirm & Submit Course Registration'}
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const renderExamsContent = () => (
     <div className="space-y-2.5">
       {!upcomingCycle || courses.length === 0 ? (
@@ -1049,6 +1313,28 @@ export function StudentPortalPage() {
           </div>
 
           <div className="flex-1 overflow-y-auto px-5 pb-24 space-y-4">
+            {courseRegCtx?.is_high_priority_pending && section !== 'course-reg' && (
+              <button
+                type="button"
+                onClick={() => setSection('course-reg')}
+                className="w-full text-left rounded-2xl bg-red-600 text-white p-3.5 shadow-md flex items-start gap-2.5 animate-pulse hover:bg-red-700 transition"
+              >
+                <AlertTriangle className="h-5 w-5 shrink-0 text-amber-200 mt-0.5" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-extrabold uppercase tracking-wide text-amber-200">
+                    High Priority · Action Required
+                  </p>
+                  <p className="text-xs font-bold leading-snug">
+                    Semester {stu.current_sem} Course Registration is OPEN
+                    {courseRegCtx.active_window?.closes_at
+                      ? ` (Closes ${courseRegCtx.active_window.closes_at.slice(0, 10)})`
+                      : ''}
+                    . Tap to submit now →
+                  </p>
+                </div>
+              </button>
+            )}
+
             {section === 'home' && (
               <>
                 <div className="rounded-3xl bg-white p-4 shadow-sm border border-slate-100 space-y-4">
@@ -1136,10 +1422,10 @@ export function StudentPortalPage() {
                         onClick: () => setSection('subjects'),
                       },
                       {
-                        label: 'My Profile',
-                        icon: User,
-                        color: 'text-pink-600',
-                        onClick: () => setSection('profile'),
+                        label: courseRegCtx?.is_high_priority_pending ? 'Course Reg !' : 'Course Reg',
+                        icon: ClipboardCheck,
+                        color: courseRegCtx?.is_high_priority_pending ? 'text-red-600' : 'text-emerald-600',
+                        onClick: () => setSection('course-reg'),
                       },
                     ].map(({ label, icon: Icon, color, onClick }) => (
                       <button
@@ -1213,6 +1499,7 @@ export function StudentPortalPage() {
               </>
             )}
 
+            {section === 'course-reg' && renderCourseRegContent()}
             {section === 'results' && renderResultsContent()}
             {section === 'exams' && renderExamsContent()}
             {section === 'hall-ticket' && renderHallTicketContent()}
@@ -1280,9 +1567,28 @@ export function StudentPortalPage() {
             )}
           </div>
 
-          <div className="grid grid-cols-5 gap-1.5 bg-white p-1.5 rounded-xl border border-slate-200 text-xs">
+          {courseRegCtx?.is_high_priority_pending && section !== 'course-reg' && (
+            <button
+              type="button"
+              onClick={() => setSection('course-reg')}
+              className="w-full text-left rounded-xl bg-red-600 text-white px-4 py-3 shadow-sm flex items-center justify-between gap-3 hover:bg-red-700"
+            >
+              <div className="flex items-center gap-2.5 text-xs">
+                <AlertTriangle className="h-4 w-4 text-amber-200 shrink-0" />
+                <span>
+                  <strong>HIGH PRIORITY:</strong> Semester {stu.current_sem} Course Registration is open. Submit now to avoid Exam Application &amp; Hall Ticket delays.
+                </span>
+              </div>
+              <span className="rounded-lg bg-white px-3 py-1 text-xs font-extrabold text-red-700 shrink-0">
+                Complete Now →
+              </span>
+            </button>
+          )}
+
+          <div className="grid grid-cols-6 gap-1.5 bg-white p-1.5 rounded-xl border border-slate-200 text-xs">
             {(
               [
+                { id: 'course-reg', label: courseRegCtx?.is_high_priority_pending ? 'Course Reg (!)' : 'Course Reg', icon: ClipboardCheck },
                 { id: 'results', label: 'Results (*)', icon: Award },
                 { id: 'exams', label: 'Exams & Seat', icon: Calendar },
                 { id: 'hall-ticket', label: 'Hall Ticket', icon: Ticket },
@@ -1307,6 +1613,7 @@ export function StudentPortalPage() {
             ))}
           </div>
 
+          {section === 'course-reg' && renderCourseRegContent()}
           {(section === 'home' || section === 'results') && renderResultsContent()}
           {section === 'exams' && renderExamsContent()}
           {section === 'hall-ticket' && renderHallTicketContent()}
