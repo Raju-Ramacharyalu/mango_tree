@@ -15,6 +15,7 @@ import { RoomAllotmentsTab } from './RoomAllotmentsTab'
 import { ExamDayFormsTab } from './ExamDayFormsTab'
 import { BundlesDecodingTab } from './BundlesDecodingTab'
 import { ResultsProcessingTab } from './ResultsProcessingTab'
+import { RevaluationEngineTab } from '@/modules/analytics/RevaluationEngineTab'
 import { BrandingAssetsTab } from './BrandingAssetsTab'
 import { cn } from '@/utils/cn'
 
@@ -29,6 +30,7 @@ const EXAM_TAB_DEFS: Array<{ id: ExamTabId; label: string }> = [
   { id: 'forms-qpds', label: 'A/B Forms & QPDS' },
   { id: 'bundles', label: 'Bundles & Decoding' },
   { id: 'results', label: 'Marks & Results' },
+  { id: 'revaluation', label: 'Revaluation Engine' },
   { id: 'branding', label: 'Branding & Photos' },
 ]
 
@@ -322,6 +324,24 @@ export function ExamsPage() {
           canEnterCie={canManageRegistrations}
           canPublish={canPublishResults}
         />
+      )}
+      {activeTab === 'revaluation' && (
+        <div className="space-y-3">
+          {activeCycle && (activeCycle.status === 'ARCHIVED' || activeCycle.status === 'COMPLETED') && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs text-amber-900">
+              <strong>Archived Cycle (Read-Only):</strong> Revaluation updates are locked for{' '}
+              <strong>{activeCycle.code}</strong>. Reopen the cycle in <strong>Exam Cycles</strong> to process new revaluation entries.
+            </div>
+          )}
+          <RevaluationEngineTab
+            institutionId={activeInstitutionId}
+            cycle={activeCycle}
+            canProcess={
+              canPublishResults &&
+              !(activeCycle && (activeCycle.status === 'ARCHIVED' || activeCycle.status === 'COMPLETED'))
+            }
+          />
+        </div>
       )}
       {activeTab === 'branding' && (
         <BrandingAssetsTab

@@ -19,6 +19,7 @@ export function OperationsPage() {
     context,
     activeInstitutionId,
     activeExamCycleId,
+    setActiveExamCycle,
     platformRoles,
     memberships,
     previewTier,
@@ -156,12 +157,31 @@ export function OperationsPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-xl font-bold text-slate-900">Exam Duties &amp; MIS Compliance</h1>
-        <p className="text-sm text-slate-500">
-          Invigilation room-duty scheduling, FIFO course evaluation assignments, and 4-tab institutional compliance
-          telemetry ({activeCycle?.code ?? 'Select Cycle'}).
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Exam Duties &amp; MIS Compliance</h1>
+          <p className="text-sm text-slate-500">
+            Invigilation room-duty scheduling, FIFO course evaluation assignments, and 4-tab institutional compliance
+            telemetry ({activeCycle?.code ?? 'Select Cycle'}).
+          </p>
+        </div>
+        {cycles.length > 0 && (
+          <div className="flex items-center gap-2 shrink-0">
+            <label className="text-xs font-medium text-slate-600">Exam Cycle:</label>
+            <select
+              value={activeCycle?.id ?? ''}
+              onChange={(e) => setActiveExamCycle(e.target.value || null)}
+              className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 max-w-xs"
+            >
+              {cycles.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.status === 'ARCHIVED' || c.status === 'COMPLETED' ? '[Archived] ' : c.is_default_active ? '★ ' : ''}
+                  {c.code} — {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <div className="border-b border-slate-200 flex gap-6 text-sm overflow-x-auto">

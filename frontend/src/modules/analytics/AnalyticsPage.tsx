@@ -6,22 +6,19 @@ import {
   BarChart3,
   UserSearch,
   GraduationCap,
-  Scale,
   Calendar,
   Archive,
 } from 'lucide-react'
 import { supabase } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
-import { resolveUserAccess } from '@/app/rbac'
 import type { ExamCycle } from '@/types/exams'
 import { InstitutionalOverviewTab } from './InstitutionalOverviewTab'
 import { CycleAnalyticsTab } from './CycleAnalyticsTab'
 import { Student360Tab } from './Student360Tab'
 import { FacultyPerformanceTab } from './FacultyPerformanceTab'
-import { RevaluationEngineTab } from './RevaluationEngineTab'
 import { cn } from '@/utils/cn'
 
-type AnalyticsTab = 'overview' | 'cycle' | 'student360' | 'faculty' | 'reval'
+type AnalyticsTab = 'overview' | 'cycle' | 'student360' | 'faculty'
 
 function isArchivedCycle(cycle: ExamCycle): boolean {
   return cycle.status === 'ARCHIVED' || cycle.status === 'COMPLETED'
@@ -33,15 +30,7 @@ export function AnalyticsPage() {
     activeInstitutionId,
     activeExamCycleId,
     setActiveExamCycle,
-    platformRoles,
-    memberships,
-    previewTier,
   } = useAppStore()
-  const activeMembership = memberships.find((m) => m.institution_id === activeInstitutionId)
-  const access = resolveUserAccess({ platformRoles, activeMembership, context, previewTier })
-
-  const canProcessReval =
-    access.effectiveTier === 'ALL' || (access.effectiveTier === 'LEAD_TEAM' && access.isCoeOrExecutiveLead)
 
   const [activeTab, setActiveTab] = useState<AnalyticsTab>('overview')
 
@@ -65,6 +54,7 @@ export function AnalyticsPage() {
   const activeCycles = useMemo(() => cycles.filter((c) => !isArchivedCycle(c)), [cycles])
   const archivedCycles = useMemo(() => cycles.filter((c) => isArchivedCycle(c)), [cycles])
   const isCycleArchived = Boolean(activeCycle && isArchivedCycle(activeCycle))
+  const needsCycleSelector = activeTab === 'cycle' || activeTab === 'faculty'
 
   if (!activeInstitutionId || context === 'PLATFORM') {
     return (
@@ -72,7 +62,7 @@ export function AnalyticsPage() {
         <TrendingUp className="h-8 w-8 text-indigo-500 mx-auto" />
         <h1 className="text-lg font-semibold text-slate-900">Select an Institution Workspace</h1>
         <p className="text-sm text-slate-500">
-          Switch to <strong>Institution</strong> mode to open Global Analytics, Student 360°, and Revaluation.
+          Switch to <strong>Institution</strong> mode to open Global Analytics and Student 360°.
         </p>
       </div>
     )
@@ -83,21 +73,19 @@ export function AnalyticsPage() {
     { id: 'cycle', label: 'Exam Cycle Analytics', icon: BarChart3 },
     { id: 'student360', label: 'Student 360°', icon: UserSearch },
     { id: 'faculty', label: 'Faculty Performance', icon: GraduationCap },
-    { id: 'reval', label: 'Revaluation Engine', icon: Scale },
   ]
 
   return (
     <div className="space-y-5">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Global Analytics, Student 360° &amp; Revaluation</h1>
+          <h1 className="text-xl font-bold text-slate-900">Global Analytics &amp; Student 360°</h1>
           <p className="text-sm text-slate-500">
-            Institutional intelligence hub, faculty pass-rate analyzer, and Favorable-Rule revaluation auditing (
-            <strong>{activeCycle ? `${activeCycle.code} — ${activeCycle.name}` : 'No cycle selected'}</strong>).
+            Read-only institutional intelligence, cross-cycle student transcripts, and faculty pass-rate analytics.
           </p>
         </div>
 
-        {cycles.length > 0 && (
+        {needsCycleSelector && cycles.length > 0 && (
           <div className="flex items-center gap-2 shrink-0">
             <label className="text-xs font-medium text-slate-600 inline-flex items-center gap-1 whitespace-nowrap">
               {isCycleArchived ? (
@@ -105,7 +93,7 @@ export function AnalyticsPage() {
               ) : (
                 <Calendar className="h-3.5 w-3.5 text-indigo-600" />
               )}
-              Working Cycle:
+              Exam Cycle:
             </label>
             <select
               value={activeCycle?.id ?? ''}
@@ -164,22 +152,6 @@ export function AnalyticsPage() {
       {activeTab === 'cycle' && <CycleAnalyticsTab institutionId={activeInstitutionId} cycle={activeCycle} />}
       {activeTab === 'student360' && <Student360Tab institutionId={activeInstitutionId} />}
       {activeTab === 'faculty' && <FacultyPerformanceTab institutionId={activeInstitutionId} cycle={activeCycle} />}
-      {activeTab === 'reval' && (
-        <div className="space-y-3">
-          {isCycleArchived && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs text-amber-900">
-              <strong>Read-Only Audit Mode:</strong> Revaluation updates are disabled while viewing archived cycle{' '}
-              <strong>{activeCycle?.code}</strong>. Reopen the cycle in <strong>Examinations → Exam Cycles</strong> to
-              process new revaluation marks.
-            </div>
-          )}
-          <RevaluationEngineTab
-            institutionId={activeInstitutionId}
-            cycle={activeCycle}
-            canProcess={canProcessReval && !isCycleArchived}
-          />
-        </div>
-      )}
     </div>
   )
 }

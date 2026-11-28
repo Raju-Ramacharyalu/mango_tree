@@ -31,6 +31,7 @@ export function QpVaultPage() {
     context,
     activeInstitutionId,
     activeExamCycleId,
+    setActiveExamCycle,
     platformRoles,
     memberships,
     previewTier,
@@ -289,9 +290,28 @@ export function QpVaultPage() {
             Per-tenant RSA-2048 encrypted SEE &amp; IA question paper lifecycle ({activeCycle?.code ?? 'No cycle selected'}).
           </p>
         </div>
-        <span className="text-xs font-medium text-slate-500">
-          {vaultKey ? `Vault Key: ${vaultKey.key_fingerprint}` : 'Vault Key Not Generated'}
-        </span>
+        <div className="flex flex-wrap items-center gap-3">
+          {cycles.length > 0 && (
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-medium text-slate-600">Cycle:</label>
+              <select
+                value={activeCycle?.id ?? ''}
+                onChange={(e) => setActiveExamCycle(e.target.value || null)}
+                className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 max-w-xs"
+              >
+                {cycles.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.status === 'ARCHIVED' || c.status === 'COMPLETED' ? '[Archived] ' : c.is_default_active ? '★ ' : ''}
+                    {c.code} — {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <span className="text-xs font-medium text-slate-500">
+            {vaultKey ? `Vault Key: ${vaultKey.key_fingerprint}` : 'Vault Key Not Generated'}
+          </span>
+        </div>
       </div>
 
       <div className="border-b border-slate-200 flex gap-6 text-sm overflow-x-auto">

@@ -18,6 +18,7 @@ export type ExamTabId =
   | 'forms-qpds'
   | 'bundles'
   | 'results'
+  | 'revaluation'
   | 'branding'
 
 export const ROLE_FALLBACK_META: Record<string, { tier: WorkspaceTier; scope: RoleScopeLevel }> = {
@@ -61,6 +62,7 @@ export const ALL_EXAM_TABS: ExamTabId[] = [
   'forms-qpds',
   'bundles',
   'results',
+  'revaluation',
   'branding',
 ]
 
