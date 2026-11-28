@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Shield, Users, Activity, BookOpen, PenTool, KeyRound, Package } from 'lucide-react'
+import { Shield, Users, Activity, BookOpen, KeyRound, Package, Lock } from 'lucide-react'
 import { supabase } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import { resolveUserAccess } from '@/app/rbac'
@@ -14,12 +14,11 @@ import type {
 import { BoeAppointmentsTab } from './BoeAppointmentsTab'
 import { SeeProgressTab } from './SeeProgressTab'
 import { IaVaultAllocationsTab } from './IaVaultAllocationsTab'
-import { FacultyIaDrafterTab } from './FacultyIaDrafterTab'
 import { SecurityVaultTab } from './SecurityVaultTab'
 import { DispatchPackagerTab } from './DispatchPackagerTab'
 import { cn } from '@/utils/cn'
 
-type QpVaultTab = 'boe' | 'packager' | 'see-progress' | 'ia-vault' | 'faculty-ia' | 'security'
+type CoeVaultTab = 'security' | 'boe' | 'packager' | 'see-progress' | 'ia-vault'
 
 function unwrap<T>(val: T | T[] | null | undefined): T | null {
   if (!val) return null
@@ -40,23 +39,10 @@ export function QpVaultPage() {
   const activeMembership = memberships.find((m) => m.institution_id === activeInstitutionId)
   const access = resolveUserAccess({ platformRoles, activeMembership, context, previewTier })
 
-  const canCoeVault = access.effectiveTier === 'ALL' || (access.effectiveTier === 'LEAD_TEAM' && access.isCoeOrExecutiveLead)
-  const canLeadNominate = access.effectiveTier === 'ALL' || access.effectiveTier === 'LEAD_TEAM'
+  const canCoeVault =
+    access.effectiveTier === 'ALL' || (access.effectiveTier === 'LEAD_TEAM' && access.isCoeOrExecutiveLead)
 
-  const visibleTabs = useMemo(() => {
-    const tabs: Array<{ id: QpVaultTab; label: string; icon: typeof Users }> = []
-    if (canLeadNominate) tabs.push({ id: 'boe', label: 'BOE Appointments', icon: Users })
-    if (canCoeVault) {
-      tabs.push({ id: 'packager', label: 'Dispatch & Packager', icon: Package })
-      tabs.push({ id: 'see-progress', label: 'SEE Progress & Decrypt', icon: Activity })
-      tabs.push({ id: 'ia-vault', label: 'IA Allocations & OMR Keys', icon: BookOpen })
-    }
-    tabs.push({ id: 'faculty-ia', label: 'Faculty IA Drafter', icon: PenTool })
-    if (canCoeVault) tabs.push({ id: 'security', label: 'Security Vault (.pem)', icon: KeyRound })
-    return tabs
-  }, [canLeadNominate, canCoeVault])
-
-  const [activeTab, setActiveTab] = useState<QpVaultTab>('boe')
+  const [activeTab, setActiveTab] = useState<CoeVaultTab>('security')
   const [coePrivateKeyPem, setCoePrivateKeyPem] = useState(
     () => sessionStorage.getItem(`mt_coe_pem_${activeInstitutionId ?? ''}`) ?? ''
   )
@@ -65,15 +51,9 @@ export function QpVaultPage() {
     setCoePrivateKeyPem(sessionStorage.getItem(`mt_coe_pem_${activeInstitutionId ?? ''}`) ?? '')
   }, [activeInstitutionId])
 
-  useEffect(() => {
-    if (visibleTabs.length > 0 && !visibleTabs.some((t) => t.id === activeTab)) {
-      setActiveTab(visibleTabs[0].id)
-    }
-  }, [visibleTabs, activeTab])
-
   const { data: cycles = [] } = useQuery<ExamCycle[]>({
     queryKey: ['exam_cycles', activeInstitutionId],
-    enabled: Boolean(activeInstitutionId),
+    enabled: Boolean(activeInstitutionId && canCoeVault),
     queryFn: async () => {
       const { data, error } = await supabase
         .from('exam_cycles')
@@ -91,7 +71,7 @@ export function QpVaultPage() {
 
   const { data: vaultKey = null } = useQuery<InstitutionVaultKey | null>({
     queryKey: ['institution_vault_key', activeInstitutionId],
-    enabled: Boolean(activeInstitutionId),
+    enabled: Boolean(activeInstitutionId && canCoeVault),
     queryFn: async () => {
       const { data, error } = await supabase
         .from('institution_vault_keys')
@@ -107,7 +87,7 @@ export function QpVaultPage() {
     Array<{ id: string; course_code: string; title: string; course_type: string }>
   >({
     queryKey: ['qp_vault_courses', activeInstitutionId],
-    enabled: Boolean(activeInstitutionId),
+    enabled: Boolean(activeInstitutionId && canCoeVault),
     queryFn: async () => {
       const { data, error } = await supabase
         .from('course_catalog')
@@ -141,7 +121,7 @@ export function QpVaultPage() {
     }>
   >({
     queryKey: ['qp_vault_staff', activeInstitutionId],
-    enabled: Boolean(activeInstitutionId),
+    enabled: Boolean(activeInstitutionId && canCoeVault),
     queryFn: async () => {
       const { data, error } = await supabase
         .from('staff_profiles')
@@ -165,7 +145,7 @@ export function QpVaultPage() {
 
   const { data: sectionTeachers = [] } = useQuery<Array<{ course_code: string; staff_profile_id: string }>>({
     queryKey: ['qp_vault_section_teachers', activeInstitutionId],
-    enabled: Boolean(activeInstitutionId),
+    enabled: Boolean(activeInstitutionId && canCoeVault),
     queryFn: async () => {
       const { data, error } = await supabase
         .from('course_section_allocations')
@@ -189,7 +169,7 @@ export function QpVaultPage() {
 
   const { data: nominations = [] } = useQuery<BoeNominationRow[]>({
     queryKey: ['boe_nominations', activeInstitutionId, activeCycle?.id],
-    enabled: Boolean(activeInstitutionId && activeCycle?.id && canLeadNominate),
+    enabled: Boolean(activeInstitutionId && activeCycle?.id && canCoeVault),
     queryFn: async () => {
       const { data, error } = await supabase
         .from('boe_nominations')
@@ -219,7 +199,7 @@ export function QpVaultPage() {
 
   const { data: iaAllocations = [] } = useQuery<IaQpAllocationRow[]>({
     queryKey: ['ia_qp_allocations', activeInstitutionId, activeCycle?.id],
-    enabled: Boolean(activeInstitutionId && activeCycle?.id),
+    enabled: Boolean(activeInstitutionId && activeCycle?.id && canCoeVault),
     queryFn: async () => {
       const { data, error } = await supabase
         .from('ia_qp_allocations')
@@ -272,7 +252,22 @@ export function QpVaultPage() {
         <Shield className="h-8 w-8 text-indigo-500 mx-auto" />
         <h1 className="text-lg font-semibold text-slate-900">Select an Institution Workspace</h1>
         <p className="text-sm text-slate-500">
-          Switch to <strong>Institution</strong> mode to manage BOE Appointments and Zero-Trust Question Paper Vaults.
+          Switch to <strong>Institution</strong> mode to open the COE QP Security Vault.
+        </p>
+      </div>
+    )
+  }
+
+  if (!canCoeVault) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-8 text-center space-y-2">
+        <Lock className="h-8 w-8 text-amber-600 mx-auto" />
+        <h1 className="text-lg font-semibold text-amber-950">COE Office Restricted Area</h1>
+        <p className="text-sm text-amber-900 max-w-lg mx-auto">
+          The Zero-Trust QP Security Vault (RSA-2048 <code>.pem</code> keys, SEE/IA decryption, and COE appointment
+          selection) is strictly restricted to the <strong>Controller of Examinations (COE)</strong>,{' '}
+          <strong>Principal</strong>, and <strong>Institution Admins</strong>. Department HODs &amp; BOE Chairs should
+          use <strong>BOS, BOE &amp; CIE</strong> for IA Setter Allocations and BOE Setter Nominations.
         </p>
       </div>
     )
@@ -281,19 +276,29 @@ export function QpVaultPage() {
   const instName = activeMembership?.institution.name ?? 'Institution'
   const instCode = activeMembership?.institution.code ?? 'INST'
 
+  const tabs: Array<{ id: CoeVaultTab; label: string; icon: typeof KeyRound }> = [
+    { id: 'security', label: 'Security Vault (.pem)', icon: KeyRound },
+    { id: 'boe', label: 'COE BOE Selection & Orders', icon: Users },
+    { id: 'packager', label: 'Dispatch & Packager', icon: Package },
+    { id: 'see-progress', label: 'SEE Progress & Decrypt', icon: Activity },
+    { id: 'ia-vault', label: 'IA Vault Decrypt & OMR Keys', icon: BookOpen },
+  ]
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">BOE Appointments &amp; Zero-Trust QP Vault</h1>
+          <h1 className="text-xl font-bold text-slate-900">COE · Zero-Trust QP Security Vault</h1>
           <p className="text-sm text-slate-500">
-            Per-tenant RSA-2048 encrypted SEE &amp; IA question paper lifecycle ({activeCycle?.code ?? 'No cycle selected'}).
+            Strictly COE Office: RSA-2048 key management, confidential BOE setter selection &amp; mail-merge dispatch,
+            SEE decryption, and submitted IA paper / OMR key extraction.
           </p>
         </div>
+
         <div className="flex flex-wrap items-center gap-3">
           {cycles.length > 0 && (
             <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-slate-600">Cycle:</label>
+              <label className="text-xs font-medium text-slate-600">Exam Cycle:</label>
               <select
                 value={activeCycle?.id ?? ''}
                 onChange={(e) => setActiveExamCycle(e.target.value || null)}
@@ -308,14 +313,25 @@ export function QpVaultPage() {
               </select>
             </div>
           )}
-          <span className="text-xs font-medium text-slate-500">
-            {vaultKey ? `Vault Key: ${vaultKey.key_fingerprint}` : 'Vault Key Not Generated'}
+          <span
+            className={cn(
+              'rounded-full px-2.5 py-1 text-xs font-semibold',
+              coePrivateKeyPem
+                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                : 'bg-slate-100 text-slate-600 border border-slate-200'
+            )}
+          >
+            {coePrivateKeyPem
+              ? '🔓 Vault Unlocked'
+              : vaultKey
+                ? `🔒 Locked (${vaultKey.key_fingerprint})`
+                : 'Vault Key Not Generated'}
           </span>
         </div>
       </div>
 
       <div className="border-b border-slate-200 flex gap-6 text-sm overflow-x-auto">
-        {visibleTabs.map(({ id, label, icon: Icon }) => (
+        {tabs.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"
@@ -333,6 +349,23 @@ export function QpVaultPage() {
         ))}
       </div>
 
+      {activeTab === 'security' && (
+        <SecurityVaultTab
+          institutionId={activeInstitutionId}
+          institutionCode={instCode}
+          vaultKey={vaultKey}
+          coePrivateKeyPem={coePrivateKeyPem}
+          onLoadPrivateKey={(pem) => {
+            setCoePrivateKeyPem(pem)
+            sessionStorage.setItem(`mt_coe_pem_${activeInstitutionId}`, pem)
+          }}
+          onClearPrivateKey={() => {
+            setCoePrivateKeyPem('')
+            sessionStorage.removeItem(`mt_coe_pem_${activeInstitutionId}`)
+          }}
+          canManageVault={canCoeVault}
+        />
+      )}
       {activeTab === 'boe' && (
         <BoeAppointmentsTab
           institutionId={activeInstitutionId}
@@ -341,7 +374,7 @@ export function QpVaultPage() {
           courses={courses}
           staff={staff}
           nominations={nominations}
-          canNominate={canLeadNominate}
+          canNominate={canCoeVault}
           canCoeApprove={canCoeVault}
         />
       )}
@@ -373,31 +406,7 @@ export function QpVaultPage() {
           allocations={iaAllocations}
           coePrivateKeyPem={coePrivateKeyPem}
           canManage={canCoeVault}
-        />
-      )}
-      {activeTab === 'faculty-ia' && (
-        <FacultyIaDrafterTab
-          institutionId={activeInstitutionId}
-          institutionName={instName}
-          publicKeyPem={vaultKey?.public_key_pem ?? null}
-          allocations={iaAllocations}
-        />
-      )}
-      {activeTab === 'security' && (
-        <SecurityVaultTab
-          institutionId={activeInstitutionId}
-          institutionCode={instCode}
-          vaultKey={vaultKey}
-          coePrivateKeyPem={coePrivateKeyPem}
-          onLoadPrivateKey={(pem) => {
-            setCoePrivateKeyPem(pem)
-            sessionStorage.setItem(`mt_coe_pem_${activeInstitutionId}`, pem)
-          }}
-          onClearPrivateKey={() => {
-            setCoePrivateKeyPem('')
-            sessionStorage.removeItem(`mt_coe_pem_${activeInstitutionId}`)
-          }}
-          canManageVault={canCoeVault}
+          mode="COE_VAULT"
         />
       )}
     </div>

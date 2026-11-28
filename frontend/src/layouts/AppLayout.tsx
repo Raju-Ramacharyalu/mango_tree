@@ -57,6 +57,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     title: 'COE · Examination Office',
     items: [
       { to: '/exams', label: 'Examinations', icon: ClipboardList },
+      { to: '/qp-vault', label: 'QP Security Vault', icon: KeyRound },
       { to: '/operations', label: 'Duties & MIS', icon: Briefcase },
     ],
   },
@@ -65,8 +66,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     title: 'Department · BOS & BOE',
     items: [
       { to: '/academics', label: 'Academics', icon: GraduationCap },
-      { to: '/governance', label: 'BOS & CIE', icon: Landmark },
-      { to: '/qp-vault', label: 'BOE & QP Vault', icon: KeyRound },
+      { to: '/governance', label: 'BOS, BOE & CIE', icon: Landmark },
     ],
   },
   {

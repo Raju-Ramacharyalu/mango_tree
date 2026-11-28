@@ -17,6 +17,7 @@ import { BundlesDecodingTab } from './BundlesDecodingTab'
 import { EvaluationDeskTab } from './EvaluationDeskTab'
 import { ResultsProcessingTab } from './ResultsProcessingTab'
 import { RevaluationEngineTab } from '@/modules/analytics/RevaluationEngineTab'
+import { SemesterPromotionTab } from '@/modules/academics/SemesterPromotionTab'
 import { BrandingAssetsTab } from './BrandingAssetsTab'
 import { cn } from '@/utils/cn'
 
@@ -33,6 +34,7 @@ const EXAM_TAB_DEFS: Array<{ id: ExamTabId; label: string }> = [
   { id: 'eval-desk', label: 'Evaluation Desk' },
   { id: 'results', label: 'Marks & Results' },
   { id: 'revaluation', label: 'Revaluation Engine' },
+  { id: 'promotion', label: 'Semester Promotion' },
   { id: 'branding', label: 'Branding & Photos' },
 ]
 
@@ -352,6 +354,12 @@ export function ExamsPage() {
             }
           />
         </div>
+      )}
+      {activeTab === 'promotion' && (
+        <SemesterPromotionTab
+          institutionId={activeInstitutionId}
+          canManage={canPublishResults}
+        />
       )}
       {activeTab === 'branding' && (
         <BrandingAssetsTab

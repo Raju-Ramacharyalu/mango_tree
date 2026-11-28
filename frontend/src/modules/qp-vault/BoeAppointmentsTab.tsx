@@ -644,14 +644,16 @@ export function BoeAppointmentsTab({
                     </td>
                     <td className="px-3 py-2.5 text-right">
                       <div className="inline-flex items-center gap-1.5 flex-wrap justify-end">
-                        <button
-                          type="button"
-                          onClick={() => printAppointmentOrder(n)}
-                          className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
-                        >
-                          <Printer className="h-3 w-3" />
-                          Order PDF
-                        </button>
+                        {canCoeApprove && (
+                          <button
+                            type="button"
+                            onClick={() => printAppointmentOrder(n)}
+                            className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                          >
+                            <Printer className="h-3 w-3" />
+                            Order PDF
+                          </button>
+                        )}
                         {canCoeApprove && (
                           <button
                             type="button"

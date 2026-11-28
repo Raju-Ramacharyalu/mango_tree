@@ -39,6 +39,7 @@ interface Props {
   allocations: IaQpAllocationRow[]
   coePrivateKeyPem: string
   canManage: boolean
+  mode?: 'ALLOCATE' | 'COE_VAULT' | 'BOTH'
 }
 
 export function IaVaultAllocationsTab({
@@ -51,7 +52,10 @@ export function IaVaultAllocationsTab({
   allocations,
   coePrivateKeyPem,
   canManage,
+  mode = 'BOTH',
 }: Props) {
+  const showAssignForm = canManage && mode !== 'COE_VAULT'
+  const showCoeVaultActions = mode !== 'ALLOCATE'
   const queryClient = useQueryClient()
   const { session } = useAppStore()
 
@@ -297,7 +301,7 @@ export function IaVaultAllocationsTab({
         </div>
       )}
 
-      {canManage && (
+      {showAssignForm && (
         <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-3">
           <h2 className="text-sm font-semibold text-slate-900">
             Assign Multi-Faculty IA Question Paper Setter (50 Marks / 90 mins)
@@ -411,9 +415,24 @@ export function IaVaultAllocationsTab({
           <span className="font-semibold text-slate-800">
             IA-{iaNumber} Encrypted Allocations ({filteredAllocations.length})
           </span>
-          <span className={coePrivateKeyPem ? 'text-emerald-700 font-semibold' : 'text-red-700 font-semibold'}>
-            {coePrivateKeyPem ? '✓ COE Private Key Unlocked' : '🔒 Load .pem in Security Vault to Print / Export Keys'}
-          </span>
+          {showCoeVaultActions ? (
+            <span className={coePrivateKeyPem ? 'text-emerald-700 font-semibold' : 'text-red-700 font-semibold'}>
+              {coePrivateKeyPem ? '✓ COE Private Key Unlocked' : '🔒 Load .pem in Security Vault to Print / Export Keys'}
+            </span>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-slate-500">IA Test Filter:</span>
+              <select
+                value={iaNumber}
+                onChange={(e) => setIaNumber(Number(e.target.value) as 1 | 2 | 3)}
+                className="rounded border border-slate-300 bg-white px-2 py-0.5 font-semibold"
+              >
+                <option value={1}>IA – 1</option>
+                <option value={2}>IA – 2</option>
+                <option value={3}>Improvement IA</option>
+              </select>
+            </div>
+          )}
         </div>
 
         <div className="overflow-x-auto">
@@ -424,7 +443,7 @@ export function IaVaultAllocationsTab({
                 <th className="px-4 py-2.5">Assigned Faculty</th>
                 <th className="px-4 py-2.5">Pattern &amp; Sets</th>
                 <th className="px-4 py-2.5">Vault Status</th>
-                <th className="px-4 py-2.5 text-right">COE Print / OMR Key CSV</th>
+                <th className="px-4 py-2.5 text-right">{showCoeVaultActions ? 'COE Print / OMR Key CSV' : 'Actions'}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -466,7 +485,7 @@ export function IaVaultAllocationsTab({
                       </td>
                       <td className="px-4 py-2.5 text-right">
                         <div className="inline-flex items-center gap-1.5 flex-wrap justify-end">
-                          {isSubmitted &&
+                          {showCoeVaultActions && isSubmitted &&
                             Array.from({ length: a.num_sets }, (_, i) => i + 1).map((setNum) => (
                               <button
                                 key={setNum}
@@ -477,7 +496,7 @@ export function IaVaultAllocationsTab({
                                 <Printer className="h-3 w-3" /> Set {String.fromCharCode(64 + setNum)}
                               </button>
                             ))}
-                          {isSubmitted && isOmr && (
+                          {showCoeVaultActions && isSubmitted && isOmr && (
                             <button
                               type="button"
                               onClick={() => exportOmrMasterKeyCsv(a)}

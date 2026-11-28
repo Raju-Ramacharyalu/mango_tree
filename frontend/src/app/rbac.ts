@@ -20,6 +20,7 @@ export type ExamTabId =
   | 'eval-desk'
   | 'results'
   | 'revaluation'
+  | 'promotion'
   | 'branding'
 
 export const ROLE_FALLBACK_META: Record<string, { tier: WorkspaceTier; scope: RoleScopeLevel }> = {
@@ -65,6 +66,7 @@ export const ALL_EXAM_TABS: ExamTabId[] = [
   'eval-desk',
   'results',
   'revaluation',
+  'promotion',
   'branding',
 ]
 
@@ -182,15 +184,15 @@ export function resolveUserAccess(params: {
     }
 
     if (effectiveTier === 'LEAD_TEAM') {
-      if (['/faculty-portal', '/front-office', '/governance', '/qp-vault', '/operations', '/analytics', '/student-portal', '/academics', '/exams', '/users'].includes(path)) return true
-      if (isCoeOrExecutiveLead && ['/institutions', '/configuration', '/data-management', '/audit-logs'].includes(path)) {
+      if (['/faculty-portal', '/front-office', '/governance', '/operations', '/analytics', '/student-portal', '/academics', '/exams', '/users'].includes(path)) return true
+      if (isCoeOrExecutiveLead && ['/qp-vault', '/institutions', '/configuration', '/data-management', '/audit-logs'].includes(path)) {
         return true
       }
       return false
     }
 
     if (isPreviewMode) {
-      return ['/faculty-portal', '/front-office', '/governance', '/qp-vault', '/operations', '/student-portal', '/academics', '/exams'].includes(path)
+      return ['/faculty-portal', '/front-office', '/governance', '/operations', '/student-portal', '/academics', '/exams'].includes(path)
     }
     if (instRoles.includes('STUDENT')) {
       return ['/student-portal'].includes(path)
@@ -201,7 +203,7 @@ export function resolveUserAccess(params: {
     if (instRoles.includes('EVALUATOR')) {
       return ['/faculty-portal', '/exams'].includes(path)
     }
-    return ['/faculty-portal', '/front-office', '/governance', '/qp-vault', '/operations', '/student-portal', '/academics', '/exams'].includes(path)
+    return ['/faculty-portal', '/front-office', '/governance', '/operations', '/student-portal', '/academics', '/exams'].includes(path)
   }
 
   let allowedExamTabs: ExamTabId[] = ALL_EXAM_TABS
