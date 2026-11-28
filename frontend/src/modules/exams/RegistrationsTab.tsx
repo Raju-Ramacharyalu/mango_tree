@@ -141,6 +141,7 @@ export function RegistrationsTab({ institutionId, cycle, canManage, canDelete }:
   const [showBulkModal, setShowBulkModal] = useState(false)
   const [bulkProgramId, setBulkProgramId] = useState('')
   const [bulkPeriodId, setBulkPeriodId] = useState('')
+  const [bulkSchemeBatch, setBulkSchemeBatch] = useState<string>('AUTO')
   const [bulkNotice, setBulkNotice] = useState<string | null>(null)
 
   const { data: feeRules = [] } = useQuery<ExamFeeRule[]>({
@@ -434,15 +435,10 @@ export function RegistrationsTab({ institutionId, cycle, canManage, canDelete }:
       const prog = programs.find((p) => p.id === bulkProgramId)
       const rule = resolveFeeRule(feeRules, cycle, prog?.program_level ?? null)
 
-      const enrollments = await fetchAllRows<{
-        id: string
-        student_id: string
-        program_id: string
-        current_period_id: string | null
-      }>((from, to) =>
+      const rawEnrollments = await fetchAllRows<Record<string, unknown>>((from, to) =>
         supabase
           .from('student_enrollments')
-          .select('id, student_id, program_id, current_period_id')
+          .select('id, student_id, program_id, current_period_id, academic_batches (scheme_batch)')
           .eq('institution_id', institutionId)
           .eq('program_id', bulkProgramId)
           .eq('current_period_id', bulkPeriodId)
@@ -451,6 +447,18 @@ export function RegistrationsTab({ institutionId, cycle, canManage, canDelete }:
           .order('id', { ascending: true })
           .range(from, to)
       )
+      const enrollments = rawEnrollments
+        .map((e) => {
+          const ab = unwrap(e.academic_batches as { scheme_batch: number | null } | { scheme_batch: number | null }[] | null)
+          return {
+            id: e.id as string,
+            student_id: e.student_id as string,
+            program_id: e.program_id as string,
+            current_period_id: (e.current_period_id as string | null) ?? null,
+            scheme_batch: ab?.scheme_batch ?? null,
+          }
+        })
+        .filter((e) => bulkSchemeBatch === 'AUTO' || String(e.scheme_batch ?? '') === bulkSchemeBatch)
       if (!enrollments || enrollments.length === 0) {
         throw new Error('No ACTIVE student enrollments found for the selected Program and Period.')
       }
@@ -470,23 +478,33 @@ export function RegistrationsTab({ institutionId, cycle, canManage, canDelete }:
         return { created: 0, skipped: enrollments.length, coursesAttached: 0 }
       }
 
-      // Check active curriculum courses for this program + period (optional auto-attach)
+      // Resolve scheme-specific curricula for this program + period (e.g. 26 Scheme vs 25 Scheme)
       const { data: curricula } = await supabase
         .from('curricula')
-        .select('id')
+        .select('id, scheme_batch, version_number')
         .eq('institution_id', institutionId)
         .eq('program_id', bulkProgramId)
         .eq('is_active', true)
         .is('deleted_at', null)
+        .order('scheme_batch', { ascending: false })
         .order('version_number', { ascending: false })
-        .limit(1)
+
+      const targetScheme =
+        bulkSchemeBatch !== 'AUTO'
+          ? Number(bulkSchemeBatch)
+          : (toInsert.find((e) => e.scheme_batch !== null)?.scheme_batch ?? null)
+
+      const matchedCurriculum =
+        (targetScheme !== null ? (curricula ?? []).find((c) => Number(c.scheme_batch) === targetScheme) : null) ??
+        (curricula ?? [])[0] ??
+        null
 
       let cohortCourses: CourseCatalogOption[] = []
-      if (curricula && curricula.length > 0) {
+      if (matchedCurriculum) {
         const { data: ccRows } = await supabase
           .from('curriculum_courses')
           .select('course_id')
-          .eq('curriculum_id', curricula[0].id)
+          .eq('curriculum_id', matchedCurriculum.id)
           .eq('academic_period_id', bulkPeriodId)
           .eq('is_active', true)
         const ids = new Set((ccRows ?? []).map((r) => r.course_id as string))
@@ -1207,6 +1225,20 @@ export function RegistrationsTab({ institutionId, cycle, canManage, canDelete }:
                       {p.code} — {p.name} ({p.program_level})
                     </option>
                   ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Scheme Year Mapping</label>
+                <select
+                  value={bulkSchemeBatch}
+                  onChange={(e) => setBulkSchemeBatch(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm"
+                >
+                  <option value="AUTO">Auto-Match Student Batch Scheme (Recommended)</option>
+                  <option value="26">26 Scheme (2026 Admission Cohort)</option>
+                  <option value="25">25 Scheme (2025 Admission Cohort)</option>
+                  <option value="24">24 Scheme (2024 Admission Cohort)</option>
+                  <option value="22">22 Scheme (NEP 2022 Cohort)</option>
                 </select>
               </div>
               <div>

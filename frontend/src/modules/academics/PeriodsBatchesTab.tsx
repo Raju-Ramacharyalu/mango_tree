@@ -33,7 +33,7 @@ export function PeriodsBatchesTab({ institutionId, canManage }: { institutionId:
   const [bCode, setBCode] = useState('')
   const [bName, setBName] = useState('')
   const [bAdmYear, setBAdmYear] = useState(2026)
-  const [bScheme, setBScheme] = useState('25')
+  const [bScheme, setBScheme] = useState('26')
 
   const [sProgramId, setSProgramId] = useState('')
   const [sPeriodId, setSPeriodId] = useState('')
@@ -352,7 +352,11 @@ export function PeriodsBatchesTab({ institutionId, canManage }: { institutionId:
               <input
                 type="number"
                 value={bAdmYear}
-                onChange={(e) => setBAdmYear(Number(e.target.value) || 2026)}
+                onChange={(e) => {
+                  const yr = Number(e.target.value) || 2026
+                  setBAdmYear(yr)
+                  if (yr >= 2000 && yr <= 2099) setBScheme(String(yr % 100))
+                }}
                 placeholder="Admission Year"
                 className="rounded border border-slate-300 px-2.5 py-1.5 text-xs"
               />
@@ -381,8 +385,15 @@ export function PeriodsBatchesTab({ institutionId, canManage }: { institutionId:
                     <span className="font-mono font-semibold">{b.code}</span>
                     <span className="text-slate-600 ml-2">{b.name}</span>
                   </div>
-                  <span className="text-slate-500">
-                    {getSingle(b.programs)?.code} · {b.admission_year}
+                  <span className="flex items-center gap-1.5 text-slate-500">
+                    {b.scheme_batch != null && (
+                      <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800">
+                        {b.scheme_batch} Scheme
+                      </span>
+                    )}
+                    <span>
+                      {getSingle(b.programs)?.code} · {b.admission_year}
+                    </span>
                   </span>
                 </div>
               ))

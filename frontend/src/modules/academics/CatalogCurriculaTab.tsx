@@ -35,6 +35,7 @@ export function CatalogCurriculaTab({ institutionId, canManage }: { institutionI
   const [curSchemeBatch, setCurSchemeBatch] = useState('25')
 
   const [selectedCurriculumId, setSelectedCurriculumId] = useState<string | null>(null)
+  const [schemeFilter, setSchemeFilter] = useState<string>('ALL')
   const [mapCourseId, setMapCourseId] = useState('')
   const [mapPeriodId, setMapPeriodId] = useState('')
   const [mapCategoryId, setMapCategoryId] = useState('')
@@ -134,7 +135,16 @@ export function CatalogCurriculaTab({ institutionId, canManage }: { institutionI
     },
   })
 
-  const activeCurriculum = curricula.find((c) => c.id === selectedCurriculumId) ?? curricula[0] ?? null
+  const schemeBatches = Array.from(
+    new Set(curricula.map((c) => c.scheme_batch).filter((b): b is number => b !== null && b !== undefined))
+  ).sort((a, b) => b - a)
+
+  const filteredCurricula = curricula.filter(
+    (c) => schemeFilter === 'ALL' || String(c.scheme_batch ?? '') === schemeFilter
+  )
+
+  const activeCurriculum =
+    filteredCurricula.find((c) => c.id === selectedCurriculumId) ?? filteredCurricula[0] ?? null
 
   const { data: mappedCourses = [] } = useQuery({
     queryKey: ['curriculum-courses', activeCurriculum?.id],
@@ -414,14 +424,28 @@ export function CatalogCurriculaTab({ institutionId, canManage }: { institutionI
           )}
 
           <div className="bg-white rounded-lg border border-slate-200 shadow-xs overflow-hidden">
-            <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 text-xs font-semibold uppercase text-slate-600">
-              Curricula ({curricula.length})
+            <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2 text-xs font-semibold uppercase text-slate-600">
+              <span>Curricula ({filteredCurricula.length})</span>
+              {schemeBatches.length > 0 && (
+                <select
+                  value={schemeFilter}
+                  onChange={(e) => setSchemeFilter(e.target.value)}
+                  className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-medium normal-case text-slate-700"
+                >
+                  <option value="ALL">All Schemes</option>
+                  {schemeBatches.map((sb) => (
+                    <option key={sb} value={String(sb)}>
+                      {sb} Scheme
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
-            {curricula.length === 0 ? (
-              <p className="p-4 text-xs text-slate-500">No curricula created yet.</p>
+            {filteredCurricula.length === 0 ? (
+              <p className="p-4 text-xs text-slate-500">No curricula match this scheme filter.</p>
             ) : (
               <ul className="divide-y divide-slate-100">
-                {curricula.map((cur) => (
+                {filteredCurricula.map((cur) => (
                   <li
                     key={cur.id}
                     onClick={() => setSelectedCurriculumId(cur.id)}
@@ -429,7 +453,14 @@ export function CatalogCurriculaTab({ institutionId, canManage }: { institutionI
                       activeCurriculum?.id === cur.id ? 'bg-indigo-50/70' : 'hover:bg-slate-50'
                     }`}
                   >
-                    <p className="text-sm font-medium text-slate-900">{cur.name}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-slate-900 truncate">{cur.name}</p>
+                      {cur.scheme_batch != null && (
+                        <span className="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800">
+                          {cur.scheme_batch} Scheme
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[11px] font-mono text-slate-500">
                       {cur.code} · {getSingle(cur.programs)?.code} · v{cur.version_number}
                     </p>
@@ -445,11 +476,18 @@ export function CatalogCurriculaTab({ institutionId, canManage }: { institutionI
             <p className="text-sm text-slate-500">Select or create a curriculum to map courses from the catalog.</p>
           ) : (
             <>
-              <div className="border-b border-slate-100 pb-3">
-                <h3 className="text-base font-semibold text-slate-900">{activeCurriculum.name}</h3>
-                <p className="text-xs font-mono text-slate-500">
-                  {activeCurriculum.code} · {getSingle(activeCurriculum.academic_period_types)?.name}
-                </p>
+              <div className="border-b border-slate-100 pb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900">{activeCurriculum.name}</h3>
+                  <p className="text-xs font-mono text-slate-500">
+                    {activeCurriculum.code} · {getSingle(activeCurriculum.academic_period_types)?.name}
+                  </p>
+                </div>
+                {activeCurriculum.scheme_batch != null && (
+                  <span className="rounded-full bg-indigo-50 border border-indigo-200 px-3 py-1 text-xs font-bold text-indigo-800">
+                    Scheme Year: {activeCurriculum.scheme_batch} Scheme (20{activeCurriculum.scheme_batch})
+                  </span>
+                )}
               </div>
 
               {canManage && (

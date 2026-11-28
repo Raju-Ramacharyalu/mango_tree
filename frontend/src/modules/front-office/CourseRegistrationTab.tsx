@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Papa from 'papaparse'
 import {
@@ -10,6 +10,9 @@ import {
   CheckCircle2,
   AlertTriangle,
   ShieldAlert,
+  Sparkles,
+  Check,
+  XCircle,
 } from 'lucide-react'
 import { supabase } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
@@ -33,6 +36,24 @@ interface Props {
   canApproveCreditOverride: boolean
 }
 
+interface LatestAttemptCourseRow {
+  course_id: string
+  course_code: string
+  course_title: string
+  credits: number
+  semester_number: number
+  cie_marks: number | null
+  see_marks: number | null
+  total_marks: number | null
+  grade_code: string | null
+  grade_point: number | null
+  result_status: string
+  attempt_number: number
+  attempt_count: number
+  is_reattempt: boolean
+  latest_cycle_code: string
+}
+
 interface FailedCourseCandidate {
   course_id: string
   course_code: string
@@ -43,6 +64,15 @@ interface FailedCourseCandidate {
   summerRule: 'RULE_1' | 'RULE_2' | 'RULE_3'
   summerRuleLabel: string
   priorOdeAttempts: number
+  latestCycleCode: string
+}
+
+interface SchemeCurriculumCourse {
+  course_id: string
+  is_elective: boolean
+  credits: number
+  scheme_batch: number | null
+  curriculum_code: string
 }
 
 function unwrap<T>(val: T | T[] | null | undefined): T | null {
@@ -50,34 +80,53 @@ function unwrap<T>(val: T | T[] | null | undefined): T | null {
   return Array.isArray(val) ? (val[0] ?? null) : val
 }
 
-function computeSummerFee(items: Array<{ summerRule: 'RULE_1' | 'RULE_2' | 'RULE_3' }>): number {
-  if (items.length === 0) return 0
-  let total = 400
+function computeSummerFeeBreakdown(items: Array<{ summerRule: 'RULE_1' | 'RULE_2' | 'RULE_3' }>): {
+  baseFee: number
+  subjectFeeTotal: number
+  total: number
+  perItemFees: number[]
+} {
+  if (items.length === 0) return { baseFee: 0, subjectFeeTotal: 0, total: 0, perItemFees: [] }
+  const baseFee = 400
   let rule2Count = 0
+  const perItemFees: number[] = []
   for (const item of items) {
-    if (item.summerRule === 'RULE_1') total += 5600
-    else if (item.summerRule === 'RULE_2') {
+    if (item.summerRule === 'RULE_1') {
+      perItemFees.push(5600)
+    } else if (item.summerRule === 'RULE_2') {
       rule2Count += 1
-      total += rule2Count === 1 ? 2000 : 1000
+      perItemFees.push(rule2Count === 1 ? 2000 : 1000)
     } else {
-      total += 600
+      perItemFees.push(600)
     }
   }
-  return total
+  const subjectFeeTotal = perItemFees.reduce((s, f) => s + f, 0)
+  return { baseFee, subjectFeeTotal, total: baseFee + subjectFeeTotal, perItemFees }
 }
 
-function computeOdeFee(items: Array<{ attemptNum: number }>): {
+function computeOdeFeeBreakdown(items: Array<{ attemptNum: number }>): {
   att1Count: number
   att2Count: number
+  appFee: number
+  gradeCardFee: number
+  subjectFeeTotal: number
   total: number
 } {
-  if (items.length === 0) return { att1Count: 0, att2Count: 0, total: 0 }
+  if (items.length === 0) {
+    return { att1Count: 0, att2Count: 0, appFee: 0, gradeCardFee: 0, subjectFeeTotal: 0, total: 0 }
+  }
   const att1Count = items.filter((i) => i.attemptNum <= 1).length
   const att2Count = items.filter((i) => i.attemptNum > 1).length
+  const appFee = 100
+  const gradeCardFee = 600
+  const subjectFeeTotal = att1Count * 6000 + att2Count * 3000
   return {
     att1Count,
     att2Count,
-    total: att1Count * 6000 + att2Count * 3000 + 100 + 600,
+    appFee,
+    gradeCardFee,
+    subjectFeeTotal,
+    total: appFee + gradeCardFee + subjectFeeTotal,
   }
 }
 
@@ -89,14 +138,20 @@ export function CourseRegistrationTab({
   canApproveCreditOverride,
 }: Props) {
   const queryClient = useQueryClient()
-  const { session } = useAppStore()
+  const { session, activeAcademicYear, activeTerm, setActiveAcademicTerm } = useAppStore()
   const csvInputRef = useRef<HTMLInputElement | null>(null)
 
   const [mode, setMode] = useState<'PHASE1' | 'SUMMER' | 'ODE'>('PHASE1')
-  const [academicYear, setAcademicYear] = useState('2026-27')
-  const [activeTerm, setActiveTerm] = useState<'ODD' | 'EVEN'>('ODD')
   const [targetId, setTargetId] = useState('')
   const [selectedCourseIds, setSelectedCourseIds] = useState<string[]>([])
+  const [courseSearch, setCourseSearch] = useState('')
+  const [showOutOfSchemeCatalog, setShowOutOfSchemeCatalog] = useState(false)
+  const [minCreditsCap, setMinCreditsCap] = useState('12')
+  const [maxCreditsCap, setMaxCreditsCap] = useState('28')
+  const [allowPhase1Override, setAllowPhase1Override] = useState(false)
+
+  // Inline target Exam Cycle for Summer / ODE (independent of global sidebar)
+  const [selectedSpecialCycleId, setSelectedSpecialCycleId] = useState<string>(cycle?.id ?? '')
   const [utrRef, setUtrRef] = useState('')
   const [allowCreditOverride, setAllowCreditOverride] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
@@ -117,6 +172,39 @@ export function CourseRegistrationTab({
     const clean = targetId.trim().toUpperCase()
     return clean ? (studentByLookup.get(clean) ?? null) : null
   }, [targetId, studentByLookup])
+
+  const { data: examCycles = [] } = useQuery<ExamCycle[]>({
+    queryKey: ['exam_cycles', institutionId],
+    enabled: Boolean(institutionId),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('exam_cycles')
+        .select('*')
+        .eq('institution_id', institutionId)
+        .is('deleted_at', null)
+        .order('is_default_active', { ascending: false })
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      return (data ?? []) as ExamCycle[]
+    },
+  })
+
+  // Auto-select matching SUMMER or ODE cycle when switching mode
+  useEffect(() => {
+    if (mode === 'PHASE1' || examCycles.length === 0) return
+    const currentValid = examCycles.find((c) => c.id === selectedSpecialCycleId && c.cycle_type === mode)
+    if (currentValid) return
+    const preferred =
+      examCycles.find((c) => c.cycle_type === mode && c.status !== 'ARCHIVED' && c.status !== 'COMPLETED') ??
+      examCycles.find((c) => c.cycle_type === mode) ??
+      cycle ??
+      examCycles[0]
+    if (preferred) setSelectedSpecialCycleId(preferred.id)
+  }, [mode, examCycles, selectedSpecialCycleId, cycle])
+
+  const activeSpecialCycle = useMemo(() => {
+    return examCycles.find((c) => c.id === selectedSpecialCycleId) ?? cycle ?? null
+  }, [examCycles, selectedSpecialCycleId, cycle])
 
   const { data: catalogCourses = [] } = useQuery<CourseCatalogOption[]>({
     queryKey: ['front_office_course_catalog', institutionId],
@@ -148,89 +236,255 @@ export function CourseRegistrationTab({
     },
   })
 
-  // Fetch student's historical failed courses + prior ODE attempts for Summer & ODE modes
-  const { data: failedCandidates = [] } = useQuery<FailedCourseCandidate[]>({
-    queryKey: ['student_failed_history', institutionId, activeStudent?.id, cycle?.id],
-    enabled: Boolean(activeStudent && (mode === 'SUMMER' || mode === 'ODE')),
+  // Resolve student's matched Scheme Curriculum courses (e.g. 26 Scheme for 1st Sem vs 25 Scheme for 3rd Sem)
+  const { data: schemeCurriculum = [] } = useQuery<SchemeCurriculumCourse[]>({
+    queryKey: [
+      'student_scheme_curriculum',
+      institutionId,
+      activeStudent?.program_id,
+      activeStudent?.current_period_id,
+      activeStudent?.scheme_batch,
+    ],
+    enabled: Boolean(activeStudent?.program_id && activeStudent?.current_period_id),
     queryFn: async () => {
-      const [resHist, priorOdeRes] = await Promise.all([
-        supabase
-          .from('exam_course_results')
-          .select(`
-            course_id, effective_course_code, credits, cie_marks, grade_code, result_status, updated_at,
-            course_catalog (title)
-          `)
-          .eq('institution_id', institutionId)
-          .eq('student_id', activeStudent!.id)
-          .order('updated_at', { ascending: false }),
-        supabase
-          .from('exam_registration_courses')
-          .select('course_id, exam_cycle_id, registration_category')
-          .eq('institution_id', institutionId)
-          .eq('student_id', activeStudent!.id),
-      ])
-      if (resHist.error) throw resHist.error
-      if (priorOdeRes.error) throw priorOdeRes.error
+      const { data: curRows, error: cErr } = await supabase
+        .from('curricula')
+        .select('id, code, scheme_batch, version_number')
+        .eq('institution_id', institutionId)
+        .eq('program_id', activeStudent!.program_id!)
+        .eq('is_active', true)
+        .is('deleted_at', null)
+        .order('scheme_batch', { ascending: false })
+        .order('version_number', { ascending: false })
+      if (cErr) throw cErr
+      if (!curRows || curRows.length === 0) return []
 
-      const odeCounts = new Map<string, number>()
-      for (const row of priorOdeRes.data ?? []) {
-        if (row.exam_cycle_id === cycle?.id) continue
-        const cat = String(row.registration_category ?? '').toUpperCase()
-        if (cat.includes('ODE')) {
-          odeCounts.set(row.course_id as string, (odeCounts.get(row.course_id as string) ?? 0) + 1)
-        }
-      }
+      const studentScheme = activeStudent!.scheme_batch
+      const matched =
+        (studentScheme !== null
+          ? curRows.find((c) => Number(c.scheme_batch) === Number(studentScheme))
+          : null) ?? curRows[0]
 
-      const latestByCourse = new Map<string, Record<string, unknown>>()
-      for (const row of resHist.data ?? []) {
-        const cid = row.course_id as string
-        if (!latestByCourse.has(cid)) latestByCourse.set(cid, row as Record<string, unknown>)
-      }
+      const { data: ccRows, error: ccErr } = await supabase
+        .from('curriculum_courses')
+        .select('course_id, is_elective, credits')
+        .eq('curriculum_id', matched.id)
+        .eq('academic_period_id', activeStudent!.current_period_id!)
+        .eq('is_active', true)
+      if (ccErr) throw ccErr
 
-      const cieThreshold = activeStudent!.program_level.toUpperCase() === 'PG' ? 25 : 20
-      const out: FailedCourseCandidate[] = []
-
-      for (const [courseId, row] of latestByCourse.entries()) {
-        const status = String(row.result_status ?? '')
-        if (!['FAIL', 'ABSENT', 'MALPRACTICE'].includes(status)) continue
-        const cie = Number(row.cie_marks ?? 0)
-        const grade = String(row.grade_code ?? (status === 'ABSENT' ? 'AB' : 'F')).toUpperCase()
-        const cc = unwrap(row.course_catalog as { title: string } | { title: string }[] | null)
-
-        let summerRule: 'RULE_1' | 'RULE_2' | 'RULE_3' = 'RULE_3'
-        let summerRuleLabel = 'Rule 3: Exam Only (SEE Fail / MP)'
-        if (cie < cieThreshold) {
-          summerRule = 'RULE_1'
-          summerRuleLabel = 'Rule 1: Mandatory Classes (CIE Fail)'
-        } else if (grade === 'AB' || status === 'ABSENT') {
-          summerRule = 'RULE_2'
-          summerRuleLabel = 'Rule 2: Exam Only (Absent)'
-        }
-
-        out.push({
-          course_id: courseId,
-          course_code: String(row.effective_course_code ?? ''),
-          course_title: cc?.title ?? 'Course',
-          credits: Number(row.credits ?? 3),
-          cie_marks: cie,
-          grade_code: grade,
-          summerRule,
-          summerRuleLabel,
-          priorOdeAttempts: odeCounts.get(courseId) ?? 0,
-        })
-      }
-
-      return out.sort((a, b) => a.course_code.localeCompare(b.course_code))
+      return (ccRows ?? []).map((r) => ({
+        course_id: r.course_id as string,
+        is_elective: Boolean(r.is_elective),
+        credits: Number(r.credits ?? 3),
+        scheme_batch: matched.scheme_batch !== null ? Number(matched.scheme_batch) : null,
+        curriculum_code: matched.code as string,
+      }))
     },
   })
 
+  // Existing Phase 1 registrations for this student in activeAcademicYear + activeTerm
+  const { data: existingPhase1CourseIds = [] } = useQuery<string[]>({
+    queryKey: ['existing_phase1_regs', institutionId, activeAcademicYear, activeTerm, activeStudent?.id],
+    enabled: Boolean(activeStudent?.id && mode === 'PHASE1'),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('academic_course_registrations')
+        .select('course_id')
+        .eq('institution_id', institutionId)
+        .eq('academic_year', activeAcademicYear)
+        .eq('term', activeTerm)
+        .eq('student_id', activeStudent!.id)
+      if (error) throw error
+      return (data ?? []).map((r) => r.course_id as string)
+    },
+  })
+
+  // Canonical Latest-Attempt Status (Item #5 & #10): exact backlogs & already-passed course blocking
+  const { data: latestAttempts = [] } = useQuery<LatestAttemptCourseRow[]>({
+    queryKey: ['student_latest_course_status', institutionId, activeStudent?.id],
+    enabled: Boolean(activeStudent?.id),
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_student_latest_course_status', {
+        p_institution_id: institutionId,
+        p_student_id: activeStudent!.id,
+        p_published_only: false,
+      })
+      if (error) throw error
+      return (data ?? []) as LatestAttemptCourseRow[]
+    },
+  })
+
+  const { data: priorOdeCounts = new Map<string, number>() } = useQuery({
+    queryKey: ['student_prior_ode_counts', institutionId, activeStudent?.id, activeSpecialCycle?.id],
+    enabled: Boolean(activeStudent?.id && mode === 'ODE'),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('exam_registration_courses')
+        .select('course_id, exam_cycle_id, registration_category')
+        .eq('institution_id', institutionId)
+        .eq('student_id', activeStudent!.id)
+      if (error) throw error
+      const map = new Map<string, number>()
+      for (const row of data ?? []) {
+        if (row.exam_cycle_id === activeSpecialCycle?.id) continue
+        if (String(row.registration_category ?? '').toUpperCase().includes('ODE')) {
+          map.set(row.course_id as string, (map.get(row.course_id as string) ?? 0) + 1)
+        }
+      }
+      return map
+    },
+  })
+
+  const passedCourseIds = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of latestAttempts) {
+      if (r.result_status === 'PASS' || r.result_status === 'EXEMPT') set.add(r.course_id)
+    }
+    return set
+  }, [latestAttempts])
+
+  const failedCandidates = useMemo<FailedCourseCandidate[]>(() => {
+    if (!activeStudent) return []
+    const cieThreshold = activeStudent.program_level.toUpperCase() === 'PG' ? 25 : 20
+    const out: FailedCourseCandidate[] = []
+    for (const r of latestAttempts) {
+      if (!['FAIL', 'ABSENT', 'MALPRACTICE'].includes(r.result_status)) continue
+      const cie = Number(r.cie_marks ?? 0)
+      const grade = String(r.grade_code ?? (r.result_status === 'ABSENT' ? 'AB' : 'F')).toUpperCase()
+      let summerRule: 'RULE_1' | 'RULE_2' | 'RULE_3' = 'RULE_3'
+      let summerRuleLabel = 'Rule 3: Exam Only (SEE Fail / MP)'
+      if (cie < cieThreshold) {
+        summerRule = 'RULE_1'
+        summerRuleLabel = 'Rule 1: Mandatory Classes (CIE Fail)'
+      } else if (grade === 'AB' || r.result_status === 'ABSENT') {
+        summerRule = 'RULE_2'
+        summerRuleLabel = 'Rule 2: Exam Only (Absent)'
+      }
+      out.push({
+        course_id: r.course_id,
+        course_code: r.course_code,
+        course_title: r.course_title,
+        credits: Number(r.credits ?? 3),
+        cie_marks: cie,
+        grade_code: grade,
+        summerRule,
+        summerRuleLabel,
+        priorOdeAttempts: priorOdeCounts.get(r.course_id) ?? 0,
+        latestCycleCode: r.latest_cycle_code,
+      })
+    }
+    return out.sort((a, b) => a.course_code.localeCompare(b.course_code))
+  }, [activeStudent, latestAttempts, priorOdeCounts])
+
+  const schemeCourseMap = useMemo(() => {
+    const map = new Map<string, SchemeCurriculumCourse>()
+    for (const sc of schemeCurriculum) map.set(sc.course_id, sc)
+    return map
+  }, [schemeCurriculum])
+
+  const existingPhase1Set = useMemo(() => new Set(existingPhase1CourseIds), [existingPhase1CourseIds])
+
   const parityMismatch =
-    activeStudent &&
+    Boolean(activeStudent) &&
     mode === 'PHASE1' &&
-    ((activeStudent.current_sem % 2 !== 0) !== (activeTerm === 'ODD'))
+    ((activeStudent!.current_sem % 2 !== 0) !== (activeTerm === 'ODD'))
+
+  const selectedPhase1Courses = useMemo(
+    () => catalogCourses.filter((c) => selectedCourseIds.includes(c.id)),
+    [catalogCourses, selectedCourseIds]
+  )
+
+  const phase1Credits = useMemo(
+    () =>
+      selectedPhase1Courses.reduce((sum, c) => {
+        const sc = schemeCourseMap.get(c.id)
+        return sum + (sc ? sc.credits : c.default_credits)
+      }, 0),
+    [selectedPhase1Courses, schemeCourseMap]
+  )
+
+  // Live 5-Rule Phase 1 Validation Engine
+  const phase1Validation = useMemo(() => {
+    const minC = Math.max(0, Number(minCreditsCap) || 0)
+    const maxC = Math.max(1, Number(maxCreditsCap) || 28)
+    const alreadyPassedPicked = selectedPhase1Courses.filter((c) => passedCourseIds.has(c.id))
+    const outOfSchemePicked =
+      schemeCurriculum.length > 0
+        ? selectedPhase1Courses.filter((c) => !schemeCourseMap.has(c.id))
+        : []
+    const underMin = selectedPhase1Courses.length > 0 && phase1Credits < minC
+    const overMax = phase1Credits > maxC
+    const hardErrors: string[] = []
+    if (parityMismatch) {
+      hardErrors.push(`Term Parity: Active term is ${activeTerm}, but student is in Semester ${activeStudent?.current_sem}.`)
+    }
+    if (alreadyPassedPicked.length > 0) {
+      hardErrors.push(
+        `Already Cleared (Latest Attempt PASS): ${alreadyPassedPicked.map((c) => c.course_code).join(', ')}.`
+      )
+    }
+    if (overMax && !(allowPhase1Override && canApproveCreditOverride)) {
+      hardErrors.push(`Credit Cap Exceeded: ${phase1Credits} credits selected (Max ${maxC}).`)
+    }
+    const warnings: string[] = []
+    if (underMin) warnings.push(`Below typical minimum credits (${phase1Credits} < ${minC}).`)
+    if (outOfSchemePicked.length > 0) {
+      warnings.push(
+        `Out-of-Scheme courses selected (${outOfSchemePicked.map((c) => c.course_code).join(', ')}) — verify against ${activeStudent?.scheme_batch ?? 'active'} Scheme.`
+      )
+    }
+    return {
+      minC,
+      maxC,
+      alreadyPassedPicked,
+      outOfSchemePicked,
+      underMin,
+      overMax,
+      hardErrors,
+      warnings,
+      canSubmit: selectedPhase1Courses.length > 0 && hardErrors.length === 0,
+    }
+  }, [
+    minCreditsCap,
+    maxCreditsCap,
+    selectedPhase1Courses,
+    passedCourseIds,
+    schemeCurriculum.length,
+    schemeCourseMap,
+    phase1Credits,
+    parityMismatch,
+    activeTerm,
+    activeStudent,
+    allowPhase1Override,
+    canApproveCreditOverride,
+  ])
+
+  const visiblePhase1Courses = useMemo(() => {
+    const q = courseSearch.trim().toLowerCase()
+    const base =
+      schemeCurriculum.length > 0 && !showOutOfSchemeCatalog
+        ? catalogCourses.filter((c) => schemeCourseMap.has(c.id) || selectedCourseIds.includes(c.id))
+        : catalogCourses
+    return base
+      .filter((c) => !q || c.course_code.toLowerCase().includes(q) || c.title.toLowerCase().includes(q))
+      .sort((a, b) => {
+        const aIn = schemeCourseMap.has(a.id) ? 0 : 1
+        const bIn = schemeCourseMap.has(b.id) ? 0 : 1
+        if (aIn !== bIn) return aIn - bIn
+        return a.course_code.localeCompare(b.course_code)
+      })
+  }, [catalogCourses, schemeCurriculum.length, showOutOfSchemeCatalog, schemeCourseMap, selectedCourseIds, courseSearch])
 
   const toggleCourse = (id: string) => {
     setSelectedCourseIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
+  const autoSelectSchemeCore = () => {
+    const coreIds = schemeCurriculum
+      .filter((sc) => !sc.is_elective && !passedCourseIds.has(sc.course_id))
+      .map((sc) => sc.course_id)
+    setSelectedCourseIds(Array.from(new Set([...existingPhase1CourseIds, ...coreIds])))
   }
 
   const savePhase1Mutation = useMutation({
@@ -238,43 +492,46 @@ export function CourseRegistrationTab({
       if (!activeStudent || !activeStudent.program_id) {
         throw new Error('Select a valid student with an active program enrollment.')
       }
-      if (parityMismatch) {
-        throw new Error(
-          `Term parity mismatch: Active term is ${activeTerm}, but student is in Semester ${activeStudent.current_sem}.`
-        )
+      if (phase1Validation.hardErrors.length > 0) {
+        throw new Error(phase1Validation.hardErrors[0])
       }
-      if (selectedCourseIds.length === 0) throw new Error('Select at least one course.')
+      if (selectedPhase1Courses.length === 0) throw new Error('Select at least one course.')
 
-      const selectedObjs = catalogCourses.filter((c) => selectedCourseIds.includes(c.id))
-      const payload = selectedObjs.map((c) => ({
-        institution_id: institutionId,
-        academic_year: academicYear.trim(),
-        term: activeTerm,
-        student_id: activeStudent.id,
-        program_id: activeStudent.program_id!,
-        academic_period_id: activeStudent.current_period_id,
-        semester_number: activeStudent.current_sem,
-        course_id: c.id,
-        course_code: c.course_code,
-        course_type: c.is_online ? 'ONLINE' : (c.category_code ?? 'CORE'),
-        credits: c.default_credits,
-        registration_source: 'MANUAL',
-        status: 'ACTIVE',
-        created_by: session?.user.id ?? null,
-        updated_by: session?.user.id ?? null,
-      }))
+      const payload = selectedPhase1Courses.map((c) => {
+        const sc = schemeCourseMap.get(c.id)
+        return {
+          institution_id: institutionId,
+          academic_year: activeAcademicYear.trim(),
+          term: activeTerm,
+          student_id: activeStudent.id,
+          program_id: activeStudent.program_id!,
+          academic_period_id: activeStudent.current_period_id,
+          semester_number: activeStudent.current_sem,
+          course_id: c.id,
+          course_code: c.course_code,
+          course_type: c.is_online ? 'ONLINE' : (c.category_code ?? 'CORE'),
+          credits: sc ? sc.credits : c.default_credits,
+          registration_source: 'MANUAL',
+          status: 'ACTIVE',
+          created_by: session?.user.id ?? null,
+          updated_by: session?.user.id ?? null,
+        }
+      })
 
       const { error } = await supabase
         .from('academic_course_registrations')
         .upsert(payload, { onConflict: 'institution_id,academic_year,term,student_id,course_id' })
       if (error) throw error
-      return selectedObjs
+      return selectedPhase1Courses
     },
     onSuccess: (courses) => {
       setErrorMsg(null)
       setNotice(
-        `Registered ${activeStudent?.registration_number} for ${courses.length} Phase 1 courses (${academicYear} ${activeTerm}).`
+        `Registered ${activeStudent?.registration_number} for ${courses.length} Phase 1 courses (${activeAcademicYear} ${activeTerm} · ${phase1Credits} credits).`
       )
+      queryClient.invalidateQueries({
+        queryKey: ['existing_phase1_regs', institutionId, activeAcademicYear, activeTerm, activeStudent?.id],
+      })
     },
     onError: (err) => {
       setNotice(null)
@@ -291,6 +548,7 @@ export function CourseRegistrationTab({
           const courseByCode = new Map(catalogCourses.map((c) => [c.course_code.trim().toUpperCase(), c]))
           const rows: Array<Record<string, unknown>> = []
           let skipped = 0
+          let paritySkipped = 0
 
           for (const rec of parsed.data) {
             const usn = (rec.usn || rec.USN || rec.Registration_Number || '').trim().toUpperCase()
@@ -301,9 +559,13 @@ export function CourseRegistrationTab({
               skipped += 1
               continue
             }
+            if ((stu.current_sem % 2 !== 0) !== (activeTerm === 'ODD')) {
+              paritySkipped += 1
+              continue
+            }
             rows.push({
               institution_id: institutionId,
-              academic_year: academicYear.trim(),
+              academic_year: activeAcademicYear.trim(),
               term: activeTerm,
               student_id: stu.id,
               program_id: stu.program_id,
@@ -330,7 +592,12 @@ export function CourseRegistrationTab({
             if (error) throw error
           }
           setErrorMsg(null)
-          setNotice(`Bulk CSV sync complete: ${rows.length} course rows saved${skipped ? ` (${skipped} unmatched skipped)` : ''}.`)
+          setNotice(
+            `Bulk CSV sync complete: ${rows.length} course rows saved` +
+              (skipped ? ` · ${skipped} unmatched skipped` : '') +
+              (paritySkipped ? ` · ${paritySkipped} term-parity mismatch skipped` : '') +
+              '.'
+          )
         } catch (err) {
           setErrorMsg(err instanceof Error ? err.message : 'Bulk CSV import failed')
         }
@@ -340,13 +607,18 @@ export function CourseRegistrationTab({
 
   const saveSpecialCycleMutation = useMutation({
     mutationFn: async () => {
-      if (!cycle) throw new Error('Select a working Exam Cycle in the sidebar first.')
+      if (!activeSpecialCycle) throw new Error('Select a Target Exam Cycle for this Summer / ODE application.')
       if (!activeStudent || !activeStudent.program_id) throw new Error('Select a valid student first.')
 
       const chosen = failedCandidates.filter((c) => selectedCourseIds.includes(c.course_id))
       if (chosen.length === 0) throw new Error('Select at least one eligible failed course.')
 
+      let appFee = 0
+      let gradeCardFee = 0
+      let subjectFeeTotal = 0
       let totalFee = 0
+      let perCourseFees: number[] = []
+
       if (mode === 'SUMMER') {
         const rule1Credits = chosen
           .filter((c) => c.summerRule === 'RULE_1')
@@ -359,20 +631,31 @@ export function CourseRegistrationTab({
             }`
           )
         }
-        totalFee = computeSummerFee(chosen)
+        const sumBreakdown = computeSummerFeeBreakdown(chosen)
+        appFee = sumBreakdown.baseFee
+        gradeCardFee = 0
+        subjectFeeTotal = sumBreakdown.subjectFeeTotal
+        totalFee = sumBreakdown.total
+        perCourseFees = sumBreakdown.perItemFees
       } else {
         const odeItems = chosen.map((c) => ({
           attemptNum: odeAttemptChoice[c.course_id] ?? (c.priorOdeAttempts >= 1 ? 2 : 1),
         }))
-        totalFee = computeOdeFee(odeItems).total
+        const odeBreak = computeOdeFeeBreakdown(odeItems)
+        appFee = odeBreak.appFee
+        gradeCardFee = odeBreak.gradeCardFee
+        subjectFeeTotal = odeBreak.subjectFeeTotal
+        totalFee = odeBreak.total
+        perCourseFees = odeItems.map((i) => (i.attemptNum <= 1 ? 6000 : 3000))
       }
 
+      // NOTE: total_fee is a PostgreSQL generated column (application_fee + grade_card_fee + subject_fee_total + late_fee)
       const { data: regRow, error: regErr } = await supabase
         .from('exam_registrations')
         .upsert(
           {
             institution_id: institutionId,
-            exam_cycle_id: cycle.id,
+            exam_cycle_id: activeSpecialCycle.id,
             student_id: activeStudent.id,
             program_id: activeStudent.program_id,
             academic_period_id: activeStudent.current_period_id,
@@ -380,7 +663,10 @@ export function CourseRegistrationTab({
             status: 'SUBMITTED',
             payment_status: utrRef.trim() ? 'PAID' : 'PENDING',
             payment_reference: utrRef.trim().toUpperCase() || null,
-            total_fee: totalFee,
+            application_fee: appFee,
+            grade_card_fee: gradeCardFee,
+            subject_fee_total: subjectFeeTotal,
+            late_fee: 0,
             credit_override_approved: mode === 'SUMMER' && allowCreditOverride && canApproveCreditOverride,
             credit_override_by:
               mode === 'SUMMER' && allowCreditOverride && canApproveCreditOverride
@@ -398,17 +684,18 @@ export function CourseRegistrationTab({
         .single()
       if (regErr) throw regErr
 
-      const coursePayloads = chosen.map((c) => {
+      const coursePayloads = chosen.map((c, idx) => {
         const att =
           mode === 'ODE'
             ? (odeAttemptChoice[c.course_id] ?? (c.priorOdeAttempts >= 1 ? 2 : 1))
             : 1
         return {
           institution_id: institutionId,
-          exam_cycle_id: cycle.id,
+          exam_cycle_id: activeSpecialCycle.id,
           registration_id: regRow.id as string,
           student_id: activeStudent.id,
           course_id: c.course_id,
+          academic_period_id: activeStudent.current_period_id,
           attempt_number: att,
           registration_category: mode === 'SUMMER' ? 'SUMMER' : 'ODE',
           rule_category:
@@ -418,6 +705,7 @@ export function CourseRegistrationTab({
                 ? 'Attempt 1 (Rs 6000)'
                 : 'Attempt 2+ (Rs 3000)',
           is_online_exempt: false,
+          subject_fee: perCourseFees[idx] ?? 0,
           eligibility_status: 'ELIGIBLE',
           updated_by: session?.user.id ?? null,
         }
@@ -432,14 +720,15 @@ export function CourseRegistrationTab({
       const { error: insErr } = await supabase.from('exam_registration_courses').insert(coursePayloads)
       if (insErr) throw insErr
 
-      return { count: chosen.length, totalFee }
+      return { count: chosen.length, totalFee, cycleCode: activeSpecialCycle.code }
     },
     onSuccess: (res) => {
       setErrorMsg(null)
       setNotice(
-        `Saved ${mode} application for ${activeStudent?.registration_number} (${res.count} courses · ₹${res.totalFee.toLocaleString('en-IN')}) directly to ${cycle?.code}.`
+        `Saved ${mode} application for ${activeStudent?.registration_number} (${res.count} courses · ₹${res.totalFee.toLocaleString('en-IN')}) directly to ${res.cycleCode}.`
       )
-      queryClient.invalidateQueries({ queryKey: ['exam_cycle_stats', institutionId, cycle?.id] })
+      queryClient.invalidateQueries({ queryKey: ['exam_cycle_stats', institutionId, activeSpecialCycle?.id] })
+      queryClient.invalidateQueries({ queryKey: ['exam_registrations', institutionId, activeSpecialCycle?.id] })
     },
     onError: (err) => {
       setNotice(null)
@@ -462,10 +751,10 @@ export function CourseRegistrationTab({
 
     const badge =
       mode === 'PHASE1'
-        ? `COURSE REGISTRATION FORM — ${activeTerm} SEMESTER ${academicYear}`
+        ? `COURSE REGISTRATION FORM — ${activeTerm} SEMESTER ${activeAcademicYear}`
         : mode === 'SUMMER'
-          ? `SUMMER SEMESTER APPLICATION FORM — ${cycle?.code ?? academicYear}`
-          : `ON-DEMAND EXAMINATION (ODE) APPLICATION — ${cycle?.code ?? academicYear}`
+          ? `SUMMER SEMESTER APPLICATION FORM — ${activeSpecialCycle?.code ?? activeAcademicYear}`
+          : `ON-DEMAND EXAMINATION (ODE) APPLICATION — ${activeSpecialCycle?.code ?? activeAcademicYear}`
 
     const photoCell = photoSrc
       ? `<img src="${escapeHtml(photoSrc)}" style="width:76px;height:94px;object-fit:cover;border:1px solid #475569" alt="Photo" />`
@@ -480,26 +769,26 @@ export function CourseRegistrationTab({
     let rowsHtml = ''
     let footerSummary = ''
     if (mode === 'PHASE1') {
-      const picked = catalogCourses.filter((c) => selectedCourseIds.includes(c.id))
-      const totalCr = picked.reduce((s, c) => s + c.default_credits, 0)
+      const picked = selectedPhase1Courses
       rowsHtml = picked
-        .map(
-          (c, idx) => `<tr>
+        .map((c, idx) => {
+          const cr = schemeCourseMap.get(c.id)?.credits ?? c.default_credits
+          return `<tr>
             <td style="text-align:center">${idx + 1}</td>
             <td style="font-family:monospace;font-weight:700">${escapeHtml(c.course_code)}</td>
-            <td>${escapeHtml(c.title)}</td>
-            <td style="text-align:center">${c.default_credits}</td>
+            <td>${escapeHtml(c.title)}${c.is_online ? ' (ONLINE · CIE/SEE Exempt)' : ''}</td>
+            <td style="text-align:center">${cr}</td>
             <td style="text-align:center">Registered</td>
           </tr>`
-        )
+        })
         .join('')
-      footerSummary = `<tr style="font-weight:700;background:#f8fafc"><td colspan="3" style="text-align:right">Total Credits</td><td style="text-align:center">${totalCr}</td><td></td></tr>`
+      footerSummary = `<tr style="font-weight:700;background:#f8fafc"><td colspan="3" style="text-align:right">Total Credits</td><td style="text-align:center">${phase1Credits}</td><td></td></tr>`
     } else {
       const picked = failedCandidates.filter((c) => selectedCourseIds.includes(c.course_id))
       const feeTotal =
         mode === 'SUMMER'
-          ? computeSummerFee(picked)
-          : computeOdeFee(
+          ? computeSummerFeeBreakdown(picked).total
+          : computeOdeFeeBreakdown(
               picked.map((c) => ({
                 attemptNum: odeAttemptChoice[c.course_id] ?? (c.priorOdeAttempts >= 1 ? 2 : 1),
               }))
@@ -532,13 +821,13 @@ export function CourseRegistrationTab({
           ${renderBrandedHeaderHtml(branding, badge)}
           <table>
             <thead>
-              <tr><th>USN / Admin No.</th><th>Student Name</th><th>Branch / Track</th><th>Sem</th><th style="width:110px;text-align:center">Photo</th></tr>
+              <tr><th>USN / Admin No.</th><th>Student Name</th><th>Branch / Scheme</th><th>Sem</th><th style="width:110px;text-align:center">Photo</th></tr>
             </thead>
             <tbody>
               <tr>
                 <td style="font-family:monospace;font-weight:700">${escapeHtml(activeStudent.registration_number)}</td>
                 <td><strong>${escapeHtml(activeStudent.full_name)}</strong></td>
-                <td>${escapeHtml(activeStudent.program_code)}${activeStudent.specialization_code !== 'GENERAL' ? ` (${escapeHtml(activeStudent.specialization_code)})` : ''}</td>
+                <td>${escapeHtml(activeStudent.program_code)}${activeStudent.scheme_batch ? ` · ${activeStudent.scheme_batch} Scheme` : ''}${activeStudent.specialization_code !== 'GENERAL' ? ` (${escapeHtml(activeStudent.specialization_code)})` : ''}</td>
                 <td style="text-align:center">${activeStudent.current_sem}</td>
                 <td style="text-align:center">${photoCell}</td>
               </tr>
@@ -564,8 +853,8 @@ export function CourseRegistrationTab({
   const summerRule1Credits = chosenFailed
     .filter((c) => c.summerRule === 'RULE_1')
     .reduce((sum, c) => sum + c.credits, 0)
-  const summerTotalFee = computeSummerFee(chosenFailed)
-  const odeSummary = computeOdeFee(
+  const summerBreakdown = computeSummerFeeBreakdown(chosenFailed)
+  const odeSummary = computeOdeFeeBreakdown(
     chosenFailed.map((c) => ({
       attemptNum: odeAttemptChoice[c.course_id] ?? (c.priorOdeAttempts >= 1 ? 2 : 1),
     }))
@@ -603,17 +892,17 @@ export function CourseRegistrationTab({
         </div>
 
         {mode === 'PHASE1' && canManage && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <input
               type="text"
-              value={academicYear}
-              onChange={(e) => setAcademicYear(e.target.value)}
+              value={activeAcademicYear}
+              onChange={(e) => setActiveAcademicTerm(e.target.value, activeTerm)}
               className="w-24 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium"
               placeholder="2026-27"
             />
             <select
               value={activeTerm}
-              onChange={(e) => setActiveTerm(e.target.value as 'ODD' | 'EVEN')}
+              onChange={(e) => setActiveAcademicTerm(activeAcademicYear, e.target.value as 'ODD' | 'EVEN')}
               className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium"
             >
               <option value="ODD">ODD Semester</option>
@@ -687,15 +976,23 @@ export function CourseRegistrationTab({
         </div>
 
         {activeStudent && (
-          <div className="rounded-md bg-indigo-50 border border-indigo-200 px-3 py-2 text-xs text-indigo-900 flex flex-wrap gap-3">
+          <div className="rounded-md bg-indigo-50 border border-indigo-200 px-3 py-2 text-xs text-indigo-900 flex flex-wrap items-center gap-3">
             <strong>{activeStudent.full_name}</strong>
-            <span>USN: {activeStudent.registration_number}</span>
+            <span className="font-mono">{activeStudent.registration_number}</span>
             <span>Branch: {activeStudent.program_code} ({activeStudent.program_level})</span>
             <span>Sem: {activeStudent.current_sem}</span>
+            {activeStudent.scheme_batch != null && (
+              <span className="rounded bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                {activeStudent.scheme_batch} Scheme
+              </span>
+            )}
             <span>Category: {activeStudent.student_category}</span>
             {activeStudent.specialization_code !== 'GENERAL' && (
               <span>Track: {activeStudent.specialization_code}</span>
             )}
+            <span className={cn('font-semibold', failedCandidates.length > 0 ? 'text-red-700' : 'text-emerald-700')}>
+              Active Backlogs (Latest): {failedCandidates.length}
+            </span>
           </div>
         )}
 
@@ -708,63 +1005,201 @@ export function CourseRegistrationTab({
         )}
       </div>
 
-      {/* PHASE 1 COURSE PICKER */}
+      {/* PHASE 1 COURSE PICKER + 5-RULE VALIDATION ENGINE */}
       {activeStudent && mode === 'PHASE1' && !parityMismatch && (
         <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-900">
-              Select Semester Courses ({selectedCourseIds.length} selected ·{' '}
-              {catalogCourses
-                .filter((c) => selectedCourseIds.includes(c.id))
-                .reduce((s, c) => s + c.default_credits, 0)}{' '}
-              credits)
-            </h3>
-            {canManage && (
-              <button
-                type="button"
-                disabled={savePhase1Mutation.isPending || selectedCourseIds.length === 0}
-                onClick={() => savePhase1Mutation.mutate()}
-                className="rounded-md bg-indigo-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">
+                Semester {activeStudent.current_sem} Courses ({selectedCourseIds.length} selected ·{' '}
+                <strong>{phase1Credits}</strong> credits)
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                {schemeCurriculum.length > 0
+                  ? `Matched ${schemeCurriculum[0].curriculum_code} (${schemeCurriculum[0].scheme_batch ?? activeStudent.scheme_batch ?? ''} Scheme): ${schemeCurriculum.length} curriculum courses mapped for Sem ${activeStudent.current_sem}.`
+                  : `No scheme curriculum mapped yet for ${activeStudent.program_code} Sem ${activeStudent.current_sem} — showing full catalog.`}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {schemeCurriculum.length > 0 && (
+                <button
+                  type="button"
+                  onClick={autoSelectSchemeCore}
+                  className="inline-flex items-center gap-1 rounded-md border border-indigo-300 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-800 hover:bg-indigo-100"
+                >
+                  <Sparkles className="h-3.5 w-3.5" /> Auto-Select Core
+                </button>
+              )}
+              {canManage && (
+                <button
+                  type="button"
+                  disabled={savePhase1Mutation.isPending || !phase1Validation.canSubmit}
+                  onClick={() => savePhase1Mutation.mutate()}
+                  className="rounded-md bg-indigo-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+                >
+                  {savePhase1Mutation.isPending ? 'Saving...' : 'Save Phase 1 Registration'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Configurable Credit Bounds + Search + Out-of-Scheme toggle */}
+          <div className="flex flex-wrap items-center gap-2 text-xs bg-slate-50 border border-slate-200 rounded-md p-2.5">
+            <input
+              type="text"
+              placeholder="Filter courses by code or title..."
+              value={courseSearch}
+              onChange={(e) => setCourseSearch(e.target.value)}
+              className="flex-1 min-w-[180px] rounded border border-slate-300 bg-white px-2.5 py-1 text-xs"
+            />
+            <label className="inline-flex items-center gap-1 text-slate-600">
+              Min Cr:
+              <input
+                type="number"
+                min={0}
+                max={30}
+                value={minCreditsCap}
+                onChange={(e) => setMinCreditsCap(e.target.value)}
+                className="w-14 rounded border border-slate-300 bg-white px-1.5 py-1 text-xs"
+              />
+            </label>
+            <label className="inline-flex items-center gap-1 text-slate-600">
+              Max Cr:
+              <input
+                type="number"
+                min={1}
+                max={40}
+                value={maxCreditsCap}
+                onChange={(e) => setMaxCreditsCap(e.target.value)}
+                className="w-14 rounded border border-slate-300 bg-white px-1.5 py-1 text-xs"
+              />
+            </label>
+            {schemeCurriculum.length > 0 && (
+              <label className="inline-flex items-center gap-1.5 font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={showOutOfSchemeCatalog}
+                  onChange={(e) => setShowOutOfSchemeCatalog(e.target.checked)}
+                  className="rounded border-slate-300 text-indigo-600"
+                />
+                Show Full Catalog (Out-of-Scheme)
+              </label>
+            )}
+          </div>
+
+          {/* Live Validation Rules Summary */}
+          <div className="rounded-md border border-slate-200 bg-slate-50/70 p-2.5 text-[11px] space-y-1">
+            <div className="flex flex-wrap gap-3">
+              <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">
+                <Check className="h-3.5 w-3.5" /> Term Parity OK ({activeTerm} / Sem {activeStudent.current_sem})
+              </span>
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 font-semibold',
+                  phase1Validation.alreadyPassedPicked.length > 0 ? 'text-red-700' : 'text-emerald-700'
+                )}
               >
-                {savePhase1Mutation.isPending ? 'Saving...' : 'Save Phase 1 Registration'}
-              </button>
+                {phase1Validation.alreadyPassedPicked.length > 0 ? (
+                  <XCircle className="h-3.5 w-3.5" />
+                ) : (
+                  <Check className="h-3.5 w-3.5" />
+                )}
+                Already-Passed Guard
+              </span>
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 font-semibold',
+                  phase1Validation.overMax ? 'text-red-700' : 'text-emerald-700'
+                )}
+              >
+                {phase1Validation.overMax ? <XCircle className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
+                Credit Cap ({phase1Credits} / {phase1Validation.maxC})
+              </span>
+            </div>
+            {phase1Validation.hardErrors.map((err, i) => (
+              <p key={i} className="text-red-700 font-semibold">
+                • Block: {err}
+              </p>
+            ))}
+            {phase1Validation.warnings.map((w, i) => (
+              <p key={i} className="text-amber-800">
+                • Advisory: {w}
+              </p>
+            ))}
+            {phase1Validation.overMax && canApproveCreditOverride && (
+              <label className="inline-flex items-center gap-1.5 text-amber-900 font-semibold pt-1">
+                <input
+                  type="checkbox"
+                  checked={allowPhase1Override}
+                  onChange={(e) => setAllowPhase1Override(e.target.checked)}
+                  className="rounded border-amber-400 text-amber-600"
+                />
+                HOD / Principal Credit Cap Override
+              </label>
             )}
           </div>
 
           <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-md">
-            {catalogCourses.map((c) => (
-              <label key={c.id} className="flex items-center justify-between px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer">
-                <span className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={selectedCourseIds.includes(c.id)}
-                    onChange={() => toggleCourse(c.id)}
-                    className="rounded border-slate-300 text-indigo-600"
-                  />
-                  <span className="font-mono font-semibold text-slate-900">{c.course_code}</span>
-                  <span className="text-slate-700">{c.title}</span>
-                  {c.is_online && (
-                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
-                      ONLINE
-                    </span>
+            {visiblePhase1Courses.map((c) => {
+              const sc = schemeCourseMap.get(c.id)
+              const isPassed = passedCourseIds.has(c.id)
+              const alreadySaved = existingPhase1Set.has(c.id)
+              return (
+                <label
+                  key={c.id}
+                  className={cn(
+                    'flex items-center justify-between px-3 py-2 text-xs',
+                    isPassed ? 'bg-slate-50 opacity-60 cursor-not-allowed' : 'hover:bg-slate-50 cursor-pointer'
                   )}
-                </span>
-                <span className="text-slate-500">{c.default_credits} Cr</span>
-              </label>
-            ))}
+                >
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      disabled={isPassed}
+                      checked={selectedCourseIds.includes(c.id)}
+                      onChange={() => toggleCourse(c.id)}
+                      className="rounded border-slate-300 text-indigo-600 disabled:opacity-40"
+                    />
+                    <span className="font-mono font-semibold text-slate-900">{c.course_code}</span>
+                    <span className="text-slate-700">{c.title}</span>
+                    {sc && (
+                      <span className="rounded bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
+                        {sc.is_elective ? 'Scheme Elective' : 'Scheme Core'}
+                      </span>
+                    )}
+                    {c.is_online && (
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                        ONLINE · Exempt
+                      </span>
+                    )}
+                    {alreadySaved && (
+                      <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+                        Already Registered
+                      </span>
+                    )}
+                    {isPassed && (
+                      <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-700">
+                        CLEARED (PASS)
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-slate-500 shrink-0 ml-2">{sc ? sc.credits : c.default_credits} Cr</span>
+                </label>
+              )
+            })}
           </div>
         </div>
       )}
 
-      {/* SUMMER & ODE SPECIAL CYCLES */}
+      {/* SUMMER & ODE SPECIAL CYCLES (Inline Target Exam Cycle Picker) */}
       {activeStudent && (mode === 'SUMMER' || mode === 'ODE') && (
         <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-semibold text-slate-900">
                 {mode === 'SUMMER'
-                  ? 'Eligible Unpassed Courses (Summer Rules 1–3)'
-                  : 'Eligible Unpassed Courses (On-Demand Examination)'}
+                  ? 'Eligible Unpassed Courses — Latest Attempt Verified (Summer Rules 1–3)'
+                  : 'Eligible Unpassed Courses — Latest Attempt Verified (On-Demand Examination)'}
               </h3>
               <p className="text-xs text-slate-500">
                 {mode === 'SUMMER'
@@ -772,16 +1207,26 @@ export function CourseRegistrationTab({
                   : 'Attempt 1: ₹6,000/subj · Attempt 2+: ₹3,000/subj · + ₹100 App Fee + ₹600 Grade Card Fee'}
               </p>
             </div>
-            {cycle && (
-              <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
-                Target Cycle: {cycle.code}
-              </span>
-            )}
+            <div className="flex items-center gap-2 text-xs">
+              <label className="font-semibold text-slate-600 whitespace-nowrap">Target {mode} Cycle:</label>
+              <select
+                value={activeSpecialCycle?.id ?? ''}
+                onChange={(e) => setSelectedSpecialCycleId(e.target.value)}
+                className="rounded-md border border-indigo-300 bg-indigo-50/40 px-2.5 py-1.5 text-xs font-semibold text-indigo-950 max-w-xs"
+              >
+                <option value="">Select exam cycle...</option>
+                {examCycles.map((ec) => (
+                  <option key={ec.id} value={ec.id}>
+                    {ec.code} ({ec.cycle_type}) — {ec.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {failedCandidates.length === 0 ? (
             <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md p-3">
-              No historical failed/absent courses found in M12 <code>exam_course_results</code> for{' '}
+              Zero active backlogs based on canonical latest attempts for{' '}
               <strong>{activeStudent.registration_number}</strong>.
             </p>
           ) : (
@@ -802,7 +1247,7 @@ export function CourseRegistrationTab({
                         <span className="font-mono font-semibold text-slate-900">{c.course_code}</span>
                         <span className="text-slate-700">{c.course_title}</span>
                         <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">
-                          {c.grade_code} · CIE {c.cie_marks} · {c.credits} Cr
+                          {c.grade_code} · CIE {c.cie_marks} · {c.credits} Cr · {c.latestCycleCode}
                         </span>
                       </label>
 
@@ -837,7 +1282,7 @@ export function CourseRegistrationTab({
                       Rule 1 Mandatory Class Credits: <strong>{summerRule1Credits} / {allowCreditOverride && canApproveCreditOverride ? 15 : 14}</strong>
                     </span>
                     <span className="text-sm font-bold text-indigo-700">
-                      Total Payable: ₹{summerTotalFee.toLocaleString('en-IN')}
+                      Total Payable: ₹{summerBreakdown.total.toLocaleString('en-IN')}
                     </span>
                   </div>
                   {canApproveCreditOverride ? (
@@ -904,7 +1349,7 @@ export function CourseRegistrationTab({
                 {canManage && (
                   <button
                     type="button"
-                    disabled={saveSpecialCycleMutation.isPending || chosenFailed.length === 0 || !cycle}
+                    disabled={saveSpecialCycleMutation.isPending || chosenFailed.length === 0 || !activeSpecialCycle}
                     onClick={() => saveSpecialCycleMutation.mutate()}
                     className="rounded-md bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
                   >
