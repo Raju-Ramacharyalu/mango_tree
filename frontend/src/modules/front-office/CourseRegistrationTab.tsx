@@ -81,6 +81,15 @@ function unwrap<T>(val: T | T[] | null | undefined): T | null {
   return Array.isArray(val) ? (val[0] ?? null) : val
 }
 
+function extractErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message) return err.message
+  if (err && typeof err === 'object' && 'message' in err && typeof (err as { message?: unknown }).message === 'string') {
+    const e = err as { message: string; details?: string; code?: string }
+    return [e.code ? `[${e.code}]` : '', e.message, e.details || ''].filter(Boolean).join(' ')
+  }
+  return fallback
+}
+
 function computeSummerFeeBreakdown(items: Array<{ summerRule: 'RULE_1' | 'RULE_2' | 'RULE_3' }>): {
   baseFee: number
   subjectFeeTotal: number
@@ -568,7 +577,7 @@ export function CourseRegistrationTab({
               course_code: cat.course_code,
               course_type: cat.is_online ? 'ONLINE' : (cat.category_code ?? 'CORE'),
               credits: Number(cc.credits ?? cat.default_credits),
-              registration_source: 'COHORT_CORE',
+              registration_source: 'MANUAL',
               status: 'ACTIVE',
               created_by: session?.user.id ?? null,
               updated_by: session?.user.id ?? null,
@@ -577,16 +586,22 @@ export function CourseRegistrationTab({
           .filter((x): x is NonNullable<typeof x> => x !== null)
       )
 
+      const dedupedMap = new Map<string, (typeof rows)[number]>()
+      for (const r of rows) {
+        dedupedMap.set(`${r.student_id}::${r.course_id}`, r)
+      }
+      const uniqueRows = Array.from(dedupedMap.values())
+
       const chunkSize = 400
-      for (let i = 0; i < rows.length; i += chunkSize) {
+      for (let i = 0; i < uniqueRows.length; i += chunkSize) {
         const { error } = await supabase
           .from('academic_course_registrations')
-          .upsert(rows.slice(i, i + chunkSize), {
+          .upsert(uniqueRows.slice(i, i + chunkSize), {
             onConflict: 'institution_id,academic_year,term,student_id,course_id',
           })
         if (error) throw error
       }
-      return { studentsCount: cohortStudents.length, coreCount: ccRows.length, totalRows: rows.length }
+      return { studentsCount: cohortStudents.length, coreCount: ccRows.length, totalRows: uniqueRows.length }
     },
     onSuccess: (res) => {
       setErrorMsg(null)
@@ -595,7 +610,7 @@ export function CourseRegistrationTab({
         `Bulk Core Registration complete: ${res.studentsCount} students in ${bulkCoreBranch} Sem ${bulkCoreSem} registered for ${res.coreCount} Core courses (${res.totalRows} rows saved to ${activeAcademicYear} ${activeTerm}).`
       )
     },
-    onError: (err) => setErrorMsg(err instanceof Error ? err.message : 'Bulk Core registration failed'),
+    onError: (err) => setErrorMsg(extractErrorMessage(err, 'Bulk Core registration failed')),
   })
 
   const savePhase1Mutation = useMutation({
@@ -646,7 +661,7 @@ export function CourseRegistrationTab({
     },
     onError: (err) => {
       setNotice(null)
-      setErrorMsg(err instanceof Error ? err.message : 'Phase 1 registration failed')
+      setErrorMsg(extractErrorMessage(err, 'Phase 1 registration failed'))
     },
   })
 
@@ -710,7 +725,7 @@ export function CourseRegistrationTab({
               '.'
           )
         } catch (err) {
-          setErrorMsg(err instanceof Error ? err.message : 'Bulk CSV import failed')
+          setErrorMsg(extractErrorMessage(err, 'Bulk CSV import failed'))
         }
       },
     })
@@ -843,7 +858,7 @@ export function CourseRegistrationTab({
     },
     onError: (err) => {
       setNotice(null)
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to submit special cycle registration')
+      setErrorMsg(extractErrorMessage(err, 'Failed to submit special cycle registration'))
     },
   })
 
