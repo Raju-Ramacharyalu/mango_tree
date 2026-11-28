@@ -85,6 +85,7 @@ export interface StudentPortalSnapshot {
     cycle_type: string
     academic_year: string
     status: string
+    semester_label?: string | null
   } | null
   withheld_notice?: {
     is_withheld: boolean
@@ -186,6 +187,7 @@ export interface StudentPortalSnapshot {
     result_status: string
     registration_category?: string
     attempt_number?: number
+    course_semester?: number
     is_arrear?: boolean
     is_graced?: boolean
     grace_marks_added?: number

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Smartphone,
@@ -33,6 +33,13 @@ import {
 import { cn } from '@/utils/cn'
 
 type PortalSection = 'home' | 'results' | 'exams' | 'hall-ticket' | 'subjects' | 'profile'
+
+const NON_CREDIT_GRADES = new Set(['PP', 'NP', 'EX'])
+
+function isNonCreditGrade(gradeCode: string | null | undefined, credits: number): boolean {
+  const g = (gradeCode ?? '').trim().toUpperCase()
+  return NON_CREDIT_GRADES.has(g) || credits === 0
+}
 
 function fmtPortalTime12h(t: string | null | undefined): string {
   if (!t) return ''
@@ -73,9 +80,6 @@ export function StudentPortalPage() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  // IMPORTANT: Never force global activeExamCycleId (e.g. LEGACY-C14) onto student results.
-  // Passing null lets the RPC auto-resolve the student's own latest published cycle while
-  // always returning all-cycles Consolidated Results (latest attempts) + published_cycles list.
   const { data: snapshot, isLoading, error } = useQuery<StudentPortalSnapshot>({
     queryKey: ['student_portal_snapshot', activeInstitutionId, selectedCycleId || null, activePreviewUsn],
     enabled: context === 'INSTITUTION' && Boolean(activeInstitutionId),
@@ -112,6 +116,60 @@ export function StudentPortalPage() {
     }
   }, [activeInstitutionId, snapshot?.student])
 
+  // Group Consolidated Latest-Attempt Results cleanly by Curriculum Semester with per-semester SGPA, Credits & %
+  const semesterGroups = useMemo(() => {
+    const list = snapshot?.consolidated_results ?? []
+    const bySem = new Map<number, typeof list>()
+    for (const r of list) {
+      const sNum = Number(r.semester_number || 1)
+      const arr = bySem.get(sNum) ?? []
+      arr.push(r)
+      bySem.set(sNum, arr)
+    }
+
+    return Array.from(bySem.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([semNumber, items]) => {
+        let crReg = 0
+        let crEarn = 0
+        let gradedCr = 0
+        let weightedGp = 0
+        let marksObt = 0
+        let marksMax = 0
+        let hasFail = false
+
+        for (const r of items) {
+          const cr = Number(r.credits ?? 0)
+          const nonCr = isNonCreditGrade(r.grade_code, cr)
+          const passed = r.result_status === 'PASS' || r.result_status === 'EXEMPT'
+          crReg += cr
+          if (passed) crEarn += cr
+          else hasFail = true
+
+          if (!nonCr) {
+            gradedCr += cr
+            if (passed) weightedGp += cr * Number(r.grade_point ?? 0)
+            marksObt += Number(r.total_marks ?? 0)
+            marksMax += 100
+          }
+        }
+
+        const sgpa = gradedCr > 0 ? Number((weightedGp / gradedCr).toFixed(2)) : 0
+        const pct = marksMax > 0 ? Number(((marksObt / marksMax) * 100).toFixed(2)) : 0
+        return {
+          semNumber,
+          items,
+          crReg,
+          crEarn,
+          sgpa,
+          marksObt,
+          marksMax,
+          pct,
+          status: hasFail ? 'FAIL' : 'PASS',
+        }
+      })
+  }, [snapshot?.consolidated_results])
+
   const printHallTicket = async () => {
     if (!activeInstitutionId || !snapshot?.student || !snapshot.hall_ticket || !snapshot.cycle) return
     const branding = await fetchInstitutionBranding(
@@ -144,7 +202,7 @@ export function StudentPortalPage() {
               <tbody>
                 <tr><th style="width:120px">USN</th><td style="font-family:monospace;font-weight:700">${escapeHtml(snapshot.student.registration_number)}</td></tr>
                 <tr><th>Student Name</th><td><strong>${escapeHtml(snapshot.student.full_name)}</strong></td></tr>
-                <tr><th>Program / Sem</th><td>${escapeHtml(snapshot.student.program_code)} — Sem ${snapshot.student.current_sem}</td></tr>
+                <tr><th>Program / Sem</th><td>${escapeHtml(snapshot.student.program_code)} — ${escapeHtml(snapshot.cycle.semester_label || `Sem ${snapshot.student.current_sem}`)}</td></tr>
                 <tr><th>Ticket / Code</th><td style="font-family:monospace">${escapeHtml(snapshot.hall_ticket.ticket_number)} · ${escapeHtml(snapshot.hall_ticket.verification_code)}</td></tr>
               </tbody>
             </table>
@@ -193,6 +251,40 @@ export function StudentPortalPage() {
     const sigMap = await signPrivateAssets([branding.coe_signature_path])
     const coeSig = branding.coe_signature_path ? (sigMap.get(branding.coe_signature_path) ?? null) : null
 
+    const regularRows = results.filter((r) => !r.is_arrear)
+    const arrearRows = results.filter((r) => Boolean(r.is_arrear))
+    const gradeCardSemLabel = snapshot.cycle.semester_label || `${snapshot.cycle.cycle_type} Examination`
+
+    const renderRow = (r: (typeof results)[number]) => {
+      const nonCr = isNonCreditGrade(r.grade_code, Number(r.credits ?? 0))
+      const seeDisp = nonCr ? '—' : r.see_marks ?? '—'
+      const isFail = !['PASS', 'EXEMPT'].includes(r.result_status)
+      return `<tr>
+        <td style="font-family:monospace;font-weight:700">${escapeHtml(r.course_code)}${r.is_arrear ? '<sup>*</sup>' : ''}</td>
+        <td>${escapeHtml(r.course_title)}${r.is_arrear ? ` <span style="font-size:9px;color:#92400e;font-weight:600">(Sem ${r.course_semester ?? ''} Arrear)</span>` : ''}${r.is_graced ? ` <span style="font-size:9px;color:#065f46">[G+${r.grace_marks_added ?? 0}]</span>` : ''}</td>
+        <td style="text-align:center">${r.credits}</td>
+        <td style="text-align:center">${r.cie_marks ?? '—'}</td>
+        <td style="text-align:center">${seeDisp}</td>
+        <td style="text-align:center;font-weight:700">${r.total_marks ?? '—'}</td>
+        <td style="text-align:center;font-weight:700;${isFail ? 'color:#b91c1c' : ''}">${escapeHtml(r.grade_code ?? '—')}</td>
+        <td style="text-align:center;font-weight:600;${isFail ? 'color:#b91c1c' : ''}">${escapeHtml(r.result_status)}</td>
+      </tr>`
+    }
+
+    const tbodySections: string[] = []
+    if (regularRows.length > 0 && arrearRows.length > 0) {
+      tbodySections.push(
+        `<tr style="background:#f1f5f9"><td colspan="8" style="font-weight:700;font-size:10px;text-transform:uppercase;color:#1e293b">Part A — Regular Examination Subjects (Semester ${regularRows[0].course_semester ?? ''})</td></tr>`
+      )
+      tbodySections.push(...regularRows.map(renderRow))
+      tbodySections.push(
+        `<tr style="background:#fffbeb"><td colspan="8" style="font-weight:700;font-size:10px;text-transform:uppercase;color:#92400e">Part B — Arrear / Repeat Subjects Appeared in Same Cycle (*)</td></tr>`
+      )
+      tbodySections.push(...arrearRows.map(renderRow))
+    } else {
+      tbodySections.push(...results.map(renderRow))
+    }
+
     openBrandedPrintWindow({
       title: `Grade_Statement_${snapshot.student.registration_number}_${snapshot.cycle.code}`,
       landscape: false,
@@ -204,27 +296,30 @@ export function StudentPortalPage() {
           ${renderBrandedHeaderHtml(
             branding,
             `PROVISIONAL STATEMENT OF GRADES — ${snapshot.cycle.name} (${snapshot.cycle.code})`,
-            `${snapshot.student.full_name} (${snapshot.student.registration_number}) · ${snapshot.student.program_code} · Sem ${snapshot.student.current_sem}`
+            `Academic Year: ${snapshot.cycle.academic_year}`
           )}
+          <table style="margin-bottom:10px">
+            <tbody>
+              <tr>
+                <th style="width:110px">Candidate Name</th>
+                <td><strong>${escapeHtml(snapshot.student.full_name)}</strong></td>
+                <th style="width:95px">USN</th>
+                <td style="font-family:monospace;font-weight:700">${escapeHtml(snapshot.student.registration_number)}</td>
+              </tr>
+              <tr>
+                <th>Program / Branch</th>
+                <td>${escapeHtml(snapshot.student.program_code ?? '')}${snapshot.student.program_name ? ` — ${escapeHtml(snapshot.student.program_name)}` : ''}</td>
+                <th>Exam Semester</th>
+                <td><strong>${escapeHtml(gradeCardSemLabel)}</strong></td>
+              </tr>
+            </tbody>
+          </table>
           <table>
             <thead>
-              <tr><th style="width:98px">Course</th><th>Course Title (Regular &amp; Arrear)</th><th style="width:42px;text-align:center">Cr</th><th style="width:44px;text-align:center">CIE</th><th style="width:44px;text-align:center">SEE</th><th style="width:46px;text-align:center">Total</th><th style="width:44px;text-align:center">Grade</th><th style="width:62px;text-align:center">Result</th></tr>
+              <tr><th style="width:98px">Course Code</th><th>Course Title</th><th style="width:38px;text-align:center">Cr</th><th style="width:42px;text-align:center">CIE</th><th style="width:42px;text-align:center">SEE</th><th style="width:46px;text-align:center">Total</th><th style="width:44px;text-align:center">Grade</th><th style="width:62px;text-align:center">Result</th></tr>
             </thead>
             <tbody>
-              ${results
-                .map(
-                  (r) => `<tr>
-                    <td style="font-family:monospace;font-weight:700">${escapeHtml(r.course_code)}${r.is_arrear ? '<sup>*</sup>' : ''}</td>
-                    <td>${escapeHtml(r.course_title)}${r.is_arrear ? ' <span style="font-size:9px;color:#92400e;font-weight:600">(Arrear / Repeat)</span>' : ''}${r.is_graced ? ` <span style="font-size:9px;color:#065f46">[G+${r.grace_marks_added ?? 0}]</span>` : ''}</td>
-                    <td style="text-align:center">${r.credits}</td>
-                    <td style="text-align:center">${r.cie_marks ?? '—'}</td>
-                    <td style="text-align:center">${r.see_marks ?? '—'}</td>
-                    <td style="text-align:center;font-weight:700">${r.total_marks ?? '—'}</td>
-                    <td style="text-align:center;font-weight:700">${escapeHtml(r.grade_code ?? '—')}</td>
-                    <td style="text-align:center">${escapeHtml(r.result_status)}</td>
-                  </tr>`
-                )
-                .join('')}
+              ${tbodySections.join('')}
             </tbody>
           </table>
           ${
@@ -237,7 +332,8 @@ export function StudentPortalPage() {
               : ''
           }
           <p style="font-size:9.5px;color:#475569;margin-top:8px">
-            <sup>*</sup> Denotes Arrear / Supplementary / Repeat subject appeared in this Examination Cycle. This statement reflects all regular and arrear courses taken in ${escapeHtml(snapshot.cycle.code)}.
+            <sup>*</sup> Denotes Arrear / Supplementary / Summer / Repeat subject appeared in this Examination Cycle.
+            '—' in SEE denotes CIE-only mandatory non-credit course (PP/NP).
           </p>
           <div class="signatures">
             <div class="sig-col"></div>
@@ -245,6 +341,85 @@ export function StudentPortalPage() {
           </div>
         </div>
       </section>`,
+    })
+  }
+
+  const printConsolidatedTranscript = async () => {
+    if (!activeInstitutionId || !snapshot?.student || semesterGroups.length === 0) return
+    const branding = await fetchInstitutionBranding(
+      activeInstitutionId,
+      activeMembership?.institution.name ?? 'Institution'
+    )
+    const sigMap = await signPrivateAssets([branding.coe_signature_path])
+    const coeSig = branding.coe_signature_path ? (sigMap.get(branding.coe_signature_path) ?? null) : null
+
+    const sectionsHtml = semesterGroups
+      .map(
+        (grp) => `
+        <div style="margin-bottom:12px">
+          <div style="background:#f1f5f9;border:1px solid #475569;border-bottom:none;padding:4px 8px;display:flex;justify-content:space-between;font-weight:700;font-size:10.5px">
+            <span>SEMESTER ${grp.semNumber}</span>
+            <span>Credits: ${grp.crEarn}/${grp.crReg} · Marks: ${grp.marksObt}/${grp.marksMax} (${grp.pct.toFixed(2)}%) · SGPA: ${grp.sgpa.toFixed(2)} · ${grp.status}</span>
+          </div>
+          <table style="margin-bottom:0">
+            <thead>
+              <tr><th style="width:96px">Course Code</th><th>Course Title</th><th style="width:36px;text-align:center">Cr</th><th style="width:40px;text-align:center">CIE</th><th style="width:40px;text-align:center">SEE</th><th style="width:44px;text-align:center">Tot</th><th style="width:42px;text-align:center">Grd</th><th style="width:82px;text-align:center">Cycle</th></tr>
+            </thead>
+            <tbody>
+              ${grp.items
+                .map((r) => {
+                  const nonCr = isNonCreditGrade(r.grade_code, Number(r.credits ?? 0))
+                  const isFail = !['PASS', 'EXEMPT'].includes(r.result_status)
+                  return `<tr>
+                    <td style="font-family:monospace;font-weight:700">${escapeHtml(r.course_code)}${r.is_reattempt ? '<sup>*</sup>' : ''}</td>
+                    <td>${escapeHtml(r.course_title)}</td>
+                    <td style="text-align:center">${r.credits}</td>
+                    <td style="text-align:center">${r.cie_marks ?? '—'}</td>
+                    <td style="text-align:center">${nonCr ? '—' : r.see_marks ?? '—'}</td>
+                    <td style="text-align:center;font-weight:700">${r.total_marks ?? '—'}</td>
+                    <td style="text-align:center;font-weight:700;${isFail ? 'color:#b91c1c' : ''}">${escapeHtml(r.grade_code ?? r.result_status)}</td>
+                    <td style="text-align:center;font-family:monospace;font-size:9.5px">${escapeHtml(r.latest_cycle_code)}</td>
+                  </tr>`
+                })
+                .join('')}
+            </tbody>
+          </table>
+        </div>`
+      )
+      .join('')
+
+    openBrandedPrintWindow({
+      title: `Consolidated_Results_${snapshot.student.registration_number}`,
+      landscape: false,
+      branding,
+      watermarkMode: 'fixed',
+      bodyHtml: `
+        ${renderBrandedHeaderHtml(branding, 'CONSOLIDATED PROVISIONAL RESULT SUMMARY (LATEST ATTEMPTS)')}
+        <table style="margin-bottom:10px">
+          <tbody>
+            <tr>
+              <th style="width:110px">Candidate Name</th>
+              <td><strong>${escapeHtml(snapshot.student.full_name)}</strong></td>
+              <th style="width:90px">USN</th>
+              <td style="font-family:monospace;font-weight:700">${escapeHtml(snapshot.student.registration_number)}</td>
+            </tr>
+            <tr>
+              <th>Program / Branch</th>
+              <td>${escapeHtml(snapshot.student.program_code ?? '')}${snapshot.student.program_name ? ` — ${escapeHtml(snapshot.student.program_name)}` : ''}</td>
+              <th>Cumulative</th>
+              <td><strong>CGPA: ${Number(snapshot.consolidated_summary?.cgpa ?? 0).toFixed(2)} · Cr: ${snapshot.consolidated_summary?.credits_earned ?? 0}/${snapshot.consolidated_summary?.credits_attempted ?? 0} · Backlogs: ${snapshot.consolidated_summary?.active_backlogs ?? 0}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+        ${sectionsHtml}
+        <p style="font-size:9.5px;color:#475569">
+          <sup>*</sup> Indicates latest attempt cleared/taken in an Arrear / Supplementary / Summer / ODE examination.
+        </p>
+        <div class="signatures">
+          <div class="sig-col"></div>
+          ${renderSignatureBlockHtml('Controller of Examinations', coeSig)}
+        </div>
+      `,
     })
   }
 
@@ -283,7 +458,7 @@ export function StudentPortalPage() {
             resultMode === 'CONSOLIDATED' ? 'bg-amber-500 text-white shadow-xs' : 'text-amber-900'
           )}
         >
-          Live Results (Latest)
+          Live Results (By Sem)
         </button>
         <button
           type="button"
@@ -293,109 +468,154 @@ export function StudentPortalPage() {
             resultMode === 'CYCLE' ? 'bg-amber-500 text-white shadow-xs' : 'text-amber-900'
           )}
         >
-          Cycle Print ({publishedCycles.length})
+          Cycle Statements ({publishedCycles.length})
         </button>
       </div>
 
       {resultMode === 'CONSOLIDATED' ? (
-        consolidatedResults.length === 0 ? (
+        semesterGroups.length === 0 ? (
           <div className="rounded-2xl bg-white border border-slate-200 p-6 text-center text-xs text-slate-500">
             No published results available for this student yet.
           </div>
         ) : (
           <div className="space-y-3">
+            {/* Cumulative KPI Strip + Consolidated Print Button */}
             {consolidatedSummary && (
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-2xl bg-white border border-amber-200 p-2.5">
-                  <p className="text-[10px] font-bold uppercase text-amber-700">CGPA</p>
-                  <p className="text-lg font-extrabold text-slate-900">
-                    {Number(consolidatedSummary.cgpa).toFixed(2)}
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-white border border-emerald-200 p-2.5">
-                  <p className="text-[10px] font-bold uppercase text-emerald-700">Credits</p>
-                  <p className="text-lg font-extrabold text-emerald-900">
-                    {consolidatedSummary.credits_earned}/{consolidatedSummary.credits_attempted}
-                  </p>
-                </div>
-                <div
-                  className={cn(
-                    'rounded-2xl bg-white border p-2.5',
-                    consolidatedSummary.active_backlogs > 0 ? 'border-red-200' : 'border-emerald-200'
-                  )}
-                >
-                  <p className="text-[10px] font-bold uppercase text-slate-500">Backlogs</p>
-                  <p
+              <div className="rounded-2xl bg-white border border-amber-200 p-3 space-y-2.5 shadow-xs">
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-xl bg-amber-50/70 p-2">
+                    <p className="text-[10px] font-bold uppercase text-amber-700">CGPA</p>
+                    <p className="text-lg font-extrabold text-slate-900">
+                      {Number(consolidatedSummary.cgpa).toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-emerald-50/70 p-2">
+                    <p className="text-[10px] font-bold uppercase text-emerald-700">Credits</p>
+                    <p className="text-lg font-extrabold text-emerald-900">
+                      {consolidatedSummary.credits_earned}/{consolidatedSummary.credits_attempted}
+                    </p>
+                  </div>
+                  <div
                     className={cn(
-                      'text-lg font-extrabold',
-                      consolidatedSummary.active_backlogs > 0 ? 'text-red-600' : 'text-emerald-700'
+                      'rounded-xl p-2',
+                      consolidatedSummary.active_backlogs > 0 ? 'bg-red-50' : 'bg-emerald-50/70'
                     )}
                   >
-                    {consolidatedSummary.active_backlogs}
-                  </p>
+                    <p className="text-[10px] font-bold uppercase text-slate-500">Backlogs</p>
+                    <p
+                      className={cn(
+                        'text-lg font-extrabold',
+                        consolidatedSummary.active_backlogs > 0 ? 'text-red-600' : 'text-emerald-700'
+                      )}
+                    >
+                      {consolidatedSummary.active_backlogs}
+                    </p>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={printConsolidatedTranscript}
+                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-950 hover:bg-amber-100"
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                  Print Semester-Wise Consolidated Summary (A4)
+                </button>
               </div>
             )}
 
-            <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase text-slate-500">
-                    <tr>
-                      <th className="px-2.5 py-2">Course</th>
-                      <th className="px-1.5 py-2 text-center">CIE</th>
-                      <th className="px-1.5 py-2 text-center">SEE</th>
-                      <th className="px-1.5 py-2 text-center">Tot</th>
-                      <th className="px-2 py-2 text-center">Grd</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {consolidatedResults.map((r) => {
-                      const passed = r.result_status === 'PASS' || r.result_status === 'EXEMPT'
-                      return (
-                        <tr key={r.course_id}>
-                          <td className="px-2.5 py-2">
-                            <div className="flex items-center gap-1">
-                              <span className="font-mono font-bold text-slate-900">
-                                {r.course_code}
+            {/* Rich Semester-by-Semester Result Cards */}
+            {semesterGroups.map((grp) => (
+              <div key={grp.semNumber} className="rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-xs">
+                <div className="px-3.5 py-2.5 bg-[#1a1c4b] text-white flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-extrabold tracking-wide">SEMESTER {grp.semNumber}</p>
+                    <p className="text-[10px] text-indigo-200">
+                      Credits: {grp.crEarn}/{grp.crReg} · Marks: {grp.marksObt}/{grp.marksMax} ({grp.pct.toFixed(1)}%)
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-right">
+                      <p className="text-[9px] uppercase text-amber-300 font-semibold leading-none">SGPA</p>
+                      <p className="text-sm font-extrabold text-white">{grp.sgpa.toFixed(2)}</p>
+                    </div>
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-[10px] font-extrabold',
+                        grp.status === 'PASS' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'
+                      )}
+                    >
+                      {grp.status}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase text-slate-500">
+                      <tr>
+                        <th className="px-2.5 py-1.5">Course</th>
+                        <th className="px-1 py-1.5 text-center">Cr</th>
+                        <th className="px-1.5 py-1.5 text-center">CIE</th>
+                        <th className="px-1.5 py-1.5 text-center">SEE</th>
+                        <th className="px-1.5 py-1.5 text-center">Tot</th>
+                        <th className="px-2 py-1.5 text-center">Grd</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {grp.items.map((r) => {
+                        const passed = r.result_status === 'PASS' || r.result_status === 'EXEMPT'
+                        const nonCr = isNonCreditGrade(r.grade_code, Number(r.credits ?? 0))
+                        return (
+                          <tr key={r.course_id}>
+                            <td className="px-2.5 py-2">
+                              <div className="flex items-center gap-1">
+                                <span className="font-mono font-bold text-slate-900">
+                                  {r.course_code}
+                                  {r.is_reattempt && (
+                                    <sup
+                                      className="ml-0.5 text-amber-600 font-extrabold"
+                                      title={`Cleared/Attempted in ${r.latest_cycle_code}`}
+                                    >
+                                      *
+                                    </sup>
+                                  )}
+                                </span>
                                 {r.is_reattempt && (
-                                  <sup
-                                    className="ml-0.5 text-amber-600 font-extrabold"
-                                    title={`Re-attempt / Arrear in ${r.latest_cycle_code}`}
-                                  >
-                                    *
-                                  </sup>
+                                  <span className="rounded bg-amber-100 px-1 py-0.2 text-[9px] font-semibold text-amber-900">
+                                    {r.latest_cycle_code}
+                                  </span>
                                 )}
+                              </div>
+                              <p className="text-[10px] text-slate-500 line-clamp-1">{r.course_title}</p>
+                            </td>
+                            <td className="px-1 py-2 text-center text-slate-500">{r.credits}</td>
+                            <td className="px-1.5 py-2 text-center text-slate-600">{r.cie_marks ?? '—'}</td>
+                            <td className="px-1.5 py-2 text-center text-slate-600">
+                              {nonCr ? '—' : r.see_marks ?? '—'}
+                            </td>
+                            <td className="px-1.5 py-2 text-center font-bold text-slate-900">{r.total_marks ?? '—'}</td>
+                            <td className="px-2 py-2 text-center">
+                              <span
+                                className={cn(
+                                  'rounded-md px-1.5 py-0.5 text-[11px] font-extrabold',
+                                  passed ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+                                )}
+                              >
+                                {r.grade_code ?? r.result_status}
                               </span>
-                              <span className="text-[9px] rounded bg-slate-100 px-1 text-slate-500">
-                                S{r.semester_number}
-                              </span>
-                            </div>
-                            <p className="text-[10px] text-slate-500 line-clamp-1">{r.course_title}</p>
-                          </td>
-                          <td className="px-1.5 py-2 text-center text-slate-600">{r.cie_marks ?? '—'}</td>
-                          <td className="px-1.5 py-2 text-center text-slate-600">{r.see_marks ?? '—'}</td>
-                          <td className="px-1.5 py-2 text-center font-bold text-slate-900">{r.total_marks ?? '—'}</td>
-                          <td className="px-2 py-2 text-center">
-                            <span
-                              className={cn(
-                                'rounded-md px-1.5 py-0.5 text-[11px] font-extrabold',
-                                passed ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-                              )}
-                            >
-                              {r.grade_code ?? r.result_status}
-                            </span>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-              <div className="px-3 py-2 bg-amber-50/60 border-t border-amber-100 text-[10px] text-amber-900">
-                <strong>*</strong> Latest attempt from Arrear / Supplementary / Summer / ODE exam. Tap{' '}
-                <strong>Cycle Print</strong> above for official exam-cycle downloads (combined Regular + Arrear).
-              </div>
+            ))}
+
+            <div className="rounded-xl px-3 py-2 bg-amber-50/70 border border-amber-200 text-[10px] text-amber-900">
+              <strong>*</strong> Denotes latest attempt cleared/taken in an Arrear / Supplementary / Summer / ODE
+              examination. Switch to <strong>Cycle Statements</strong> above for exam-cycle printable grade cards.
             </div>
           </div>
         )
@@ -403,7 +623,7 @@ export function StudentPortalPage() {
         /* Cycle-Wise Official Download & Combined Regular + Arrear Statement */
         <div className="space-y-3">
           {publishedCycles.length > 0 && (
-            <div className="rounded-2xl bg-white border border-slate-200 p-3 space-y-2">
+            <div className="rounded-2xl bg-white border border-slate-200 p-3 space-y-2 shadow-xs">
               <label className="block text-[10px] font-bold uppercase text-slate-500">
                 Select Published Exam Cycle
               </label>
@@ -418,6 +638,11 @@ export function StudentPortalPage() {
                   </option>
                 ))}
               </select>
+              {snapshot?.cycle?.semester_label && (
+                <p className="text-[11px] font-semibold text-indigo-800">
+                  Statement Scope: {snapshot.cycle.semester_label}
+                </p>
+              )}
               <button
                 type="button"
                 disabled={courseResults.length === 0 || Boolean(snapshot?.withheld_notice?.is_withheld)}
@@ -445,18 +670,29 @@ export function StudentPortalPage() {
               No published cycle statement found.
             </div>
           ) : (
-            <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden">
+            <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-xs">
               {snapshot?.semester_result && (
-                <div className="px-3.5 py-2.5 bg-amber-50 border-b border-amber-100 flex items-center justify-between text-xs">
+                <div className="px-3.5 py-2.5 bg-[#1a1c4b] text-white flex items-center justify-between text-xs">
                   <div>
-                    <p className="text-[10px] font-bold uppercase text-amber-700">{snapshot.cycle?.code} · SGPA</p>
-                    <p className="text-lg font-extrabold text-amber-950">
-                      {Number(snapshot.semester_result.sgpa).toFixed(2)}
+                    <p className="text-[10px] font-bold uppercase text-amber-300">
+                      {snapshot.cycle?.semester_label || snapshot.cycle?.code}
+                    </p>
+                    <p className="text-lg font-extrabold">
+                      SGPA {Number(snapshot.semester_result.sgpa).toFixed(2)}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-bold text-slate-900">{snapshot.semester_result.overall_status}</p>
-                    <p className="text-[11px] text-slate-600">
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-[10px] font-extrabold',
+                        snapshot.semester_result.overall_status === 'PASS'
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-red-500 text-white'
+                      )}
+                    >
+                      {snapshot.semester_result.overall_status}
+                    </span>
+                    <p className="text-[11px] text-indigo-200 mt-0.5">
                       Cr: {snapshot.semester_result.credits_earned}/{snapshot.semester_result.credits_registered}
                     </p>
                   </div>
@@ -474,28 +710,48 @@ export function StudentPortalPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {courseResults.map((r) => (
-                      <tr key={`${r.course_code}-${r.attempt_number ?? 1}`}>
-                        <td className="px-2.5 py-2">
-                          <span className="font-mono font-bold text-slate-900">
-                            {r.course_code}
-                            {r.is_arrear && <sup className="ml-0.5 text-amber-600 font-extrabold">*</sup>}
-                          </span>
-                          {r.is_arrear && (
-                            <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-900">
-                              ARREAR
+                    {courseResults.map((r) => {
+                      const nonCr = isNonCreditGrade(r.grade_code, Number(r.credits ?? 0))
+                      const passed = r.result_status === 'PASS' || r.result_status === 'EXEMPT'
+                      return (
+                        <tr key={`${r.course_code}-${r.attempt_number ?? 1}`}>
+                          <td className="px-2.5 py-2">
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <span className="font-mono font-bold text-slate-900">
+                                {r.course_code}
+                                {r.is_arrear && <sup className="ml-0.5 text-amber-600 font-extrabold">*</sup>}
+                              </span>
+                              {r.course_semester && (
+                                <span className="rounded bg-slate-100 px-1 text-[9px] font-semibold text-slate-600">
+                                  S{r.course_semester}
+                                </span>
+                              )}
+                              {r.is_arrear && (
+                                <span className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-900">
+                                  ARREAR
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-500 line-clamp-1">{r.course_title}</p>
+                          </td>
+                          <td className="px-1.5 py-2 text-center text-slate-600">{r.cie_marks ?? '—'}</td>
+                          <td className="px-1.5 py-2 text-center text-slate-600">
+                            {nonCr ? '—' : r.see_marks ?? '—'}
+                          </td>
+                          <td className="px-1.5 py-2 text-center font-bold">{r.total_marks ?? '—'}</td>
+                          <td className="px-2 py-2 text-center">
+                            <span
+                              className={cn(
+                                'rounded-md px-1.5 py-0.5 text-[11px] font-extrabold',
+                                passed ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+                              )}
+                            >
+                              {r.grade_code ?? '—'}
                             </span>
-                          )}
-                          <p className="text-[10px] text-slate-500 line-clamp-1">{r.course_title}</p>
-                        </td>
-                        <td className="px-1.5 py-2 text-center text-slate-600">{r.cie_marks ?? '—'}</td>
-                        <td className="px-1.5 py-2 text-center text-slate-600">{r.see_marks ?? '—'}</td>
-                        <td className="px-1.5 py-2 text-center font-bold">{r.total_marks ?? '—'}</td>
-                        <td className="px-2 py-2 text-center font-extrabold text-indigo-700">
-                          {r.grade_code ?? '—'}
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -616,7 +872,7 @@ export function StudentPortalPage() {
           <h3 className="text-base font-extrabold text-slate-900">{stu.full_name}</h3>
           <p className="text-xs font-mono font-bold text-amber-700">{stu.registration_number}</p>
           <p className="text-xs text-slate-500 mt-1">
-            {stu.program_name || stu.program_code} · Sem {stu.current_sem}
+            {stu.program_name || stu.program_code} · Current Sem {stu.current_sem}
             {stu.section_name ? ` · Sec ${stu.section_name}` : ''}
           </p>
         </div>
@@ -639,7 +895,7 @@ export function StudentPortalPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">Student Portal</h1>
           <p className="text-xs text-slate-500">
-            Mobile-first campus view for Live Results (*), Official Cycle Statements, Hall Tickets &amp; Seat Locator.
+            Mobile-first campus view for Semester-Wise Results (*), Official Cycle Statements, Hall Tickets &amp; Seat Locator.
           </p>
         </div>
         {isDesktopViewport && stu && (
@@ -675,7 +931,7 @@ export function StudentPortalPage() {
             <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2.5 top-2.5" />
             <input
               type="text"
-              placeholder="Staff Preview: enter Student USN (e.g. 1AM25CS001)..."
+              placeholder="Staff Preview: enter Student USN (e.g. 1AM25EC008)..."
               value={usnInput}
               onChange={(e) => setUsnInput(e.target.value.toUpperCase())}
               className="w-full rounded-md border border-indigo-300 bg-white pl-8 pr-3 py-1.5 text-xs font-mono uppercase"
@@ -720,9 +976,8 @@ export function StudentPortalPage() {
           <p className="text-xs text-slate-500">{snapshot?.reason}</p>
         </div>
       ) : useMobileLayout ? (
-        /* MOBILE-FIRST APP FRAME (matches BOS-BOE StudentPortal.jsx) */
+        /* MOBILE-FIRST APP FRAME */
         <div className="mx-auto w-full max-w-[420px] min-h-[760px] rounded-[36px] border-[6px] border-slate-800 bg-[#FDFBF7] shadow-2xl relative overflow-hidden flex flex-col">
-          {/* Top App Bar */}
           <div className="px-5 pt-6 pb-3 flex items-start justify-between">
             <div>
               <p className="text-xs font-medium text-slate-500">Welcome Back</p>
@@ -741,11 +996,9 @@ export function StudentPortalPage() {
             </button>
           </div>
 
-          {/* Scrollable Body */}
           <div className="flex-1 overflow-y-auto px-5 pb-24 space-y-4">
             {section === 'home' && (
               <>
-                {/* Profile + Semester / CGPA / Backlogs Card */}
                 <div className="rounded-3xl bg-white p-4 shadow-sm border border-slate-100 space-y-4">
                   <div className="flex items-center gap-3.5">
                     <div className="h-14 w-14 rounded-full bg-amber-200 overflow-hidden flex items-center justify-center font-extrabold text-xl text-amber-800 shrink-0">
@@ -763,7 +1016,7 @@ export function StudentPortalPage() {
                   </div>
                   <div className="grid grid-cols-3 rounded-2xl bg-[#fff7ed] p-3 text-center">
                     <div className="border-r border-amber-200/80">
-                      <p className="text-[10px] font-semibold text-amber-600">Semester</p>
+                      <p className="text-[10px] font-semibold text-amber-600">Current Sem</p>
                       <p className="text-xl font-extrabold text-amber-700">
                         {String(stu.current_sem).padStart(2, '0')}
                       </p>
@@ -790,7 +1043,6 @@ export function StudentPortalPage() {
                   </div>
                 </div>
 
-                {/* Quick Actions Grid (3×2 matching BOS-BOE StudentPortal.jsx) */}
                 <div className="space-y-2.5">
                   <h3 className="text-sm font-extrabold text-slate-900">Your campus, simplified</h3>
                   <div className="grid grid-cols-3 gap-2.5">
@@ -855,10 +1107,10 @@ export function StudentPortalPage() {
                   </div>
                 </div>
 
-                {/* Quick Snapshot of Latest Consolidated Results */}
+                {/* Semester Performance Snapshot */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-extrabold text-slate-900">Latest Result Summary</h3>
+                    <h3 className="text-sm font-extrabold text-slate-900">Semester Performance</h3>
                     <button
                       type="button"
                       onClick={() => {
@@ -870,25 +1122,38 @@ export function StudentPortalPage() {
                       View all →
                     </button>
                   </div>
-                  {consolidatedResults.length === 0 ? (
+                  {semesterGroups.length === 0 ? (
                     <div className="rounded-2xl bg-white p-4 text-center text-xs text-slate-400 border border-slate-100">
                       No published results yet.
                     </div>
                   ) : (
-                    <div className="rounded-2xl bg-white p-3.5 border border-slate-100 space-y-2">
-                      {consolidatedResults.slice(0, 4).map((r) => (
-                        <div key={r.course_id} className="flex items-center justify-between text-xs">
-                          <div className="min-w-0 pr-2">
-                            <span className="font-mono font-bold text-slate-900">
-                              {r.course_code}
-                              {r.is_reattempt && <sup className="text-amber-600">*</sup>}
+                    <div className="grid grid-cols-2 gap-2">
+                      {semesterGroups.map((g) => (
+                        <button
+                          key={g.semNumber}
+                          type="button"
+                          onClick={() => {
+                            setResultMode('CONSOLIDATED')
+                            setSection('results')
+                          }}
+                          className="text-left rounded-2xl bg-white p-3 border border-slate-100 shadow-xs hover:border-amber-300 transition"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-extrabold text-[#1a1c4b]">SEM {g.semNumber}</span>
+                            <span
+                              className={cn(
+                                'rounded-full px-1.5 py-0.5 text-[9px] font-bold',
+                                g.status === 'PASS' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'
+                              )}
+                            >
+                              {g.status}
                             </span>
-                            <p className="text-[10px] text-slate-500 truncate">{r.course_title}</p>
                           </div>
-                          <span className="font-extrabold text-indigo-700 shrink-0">
-                            {r.grade_code ?? r.result_status} ({r.total_marks ?? '—'})
-                          </span>
-                        </div>
+                          <p className="text-lg font-extrabold text-amber-600 mt-1">SGPA {g.sgpa.toFixed(2)}</p>
+                          <p className="text-[10px] text-slate-500">
+                            {g.crEarn}/{g.crReg} Cr · {g.pct.toFixed(1)}%
+                          </p>
+                        </button>
                       ))}
                     </div>
                   )}
@@ -903,7 +1168,6 @@ export function StudentPortalPage() {
             {section === 'profile' && renderProfileContent()}
           </div>
 
-          {/* Floating Rounded Bottom Nav Bar */}
           <div className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur border-t border-slate-200/70 rounded-t-3xl px-6 py-3 flex justify-between">
             {(
               [
@@ -932,7 +1196,7 @@ export function StudentPortalPage() {
           </div>
         </div>
       ) : (
-        /* DESKTOP VIEW (optional toggle on wide screens) */
+        /* DESKTOP VIEW */
         <div className="max-w-4xl mx-auto space-y-4">
           <div className="rounded-2xl bg-slate-900 text-white p-4 flex items-center gap-4 shadow-sm">
             <div className="h-16 w-14 rounded-xl bg-slate-800 border border-slate-700 overflow-hidden flex items-center justify-center shrink-0 font-bold text-xl text-amber-300">
@@ -946,7 +1210,7 @@ export function StudentPortalPage() {
               <p className="text-base font-bold truncate">{stu.full_name}</p>
               <p className="text-xs font-mono text-amber-300">{stu.registration_number}</p>
               <p className="text-xs text-slate-300 mt-0.5 truncate">
-                {stu.program_code ?? 'GEN'} · Sem {stu.current_sem}
+                {stu.program_code ?? 'GEN'} · Current Sem {stu.current_sem}
                 {stu.section_name ? ` · Sec ${stu.section_name}` : ''} · {stu.student_category}
               </p>
             </div>

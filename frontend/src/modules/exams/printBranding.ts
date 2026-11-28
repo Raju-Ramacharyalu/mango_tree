@@ -63,8 +63,17 @@ export async function fetchInstitutionBranding(
   const printCfg = settingsMap.get('print_branding') ?? {}
   const sigCfg = settingsMap.get('exam_signatures') ?? {}
 
-  const addressLine =
-    [inst?.address_line1, inst?.city, inst?.state].filter(Boolean).join(', ') || null
+  const rawAddressParts = [inst?.address_line1, inst?.city, inst?.state]
+    .filter((v): v is string => Boolean(v && v.trim()))
+    .flatMap((part) => part.split(',').map((s) => s.trim()).filter(Boolean))
+  const seenAddrTokens = new Set<string>()
+  const dedupedAddressParts = rawAddressParts.filter((token) => {
+    const key = token.toLowerCase()
+    if (seenAddrTokens.has(key)) return false
+    seenAddrTokens.add(key)
+    return true
+  })
+  const addressLine = dedupedAddressParts.join(', ') || null
 
   const leftLogo =
     (typeof printCfg.left_logo_url === 'string' && printCfg.left_logo_url) ||
