@@ -86,6 +86,10 @@ export interface StudentPortalSnapshot {
     academic_year: string
     status: string
   } | null
+  withheld_notice?: {
+    is_withheld: boolean
+    reason: string | null
+  } | null
   registration?: {
     id: string
     registration_type: string

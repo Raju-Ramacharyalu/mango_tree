@@ -6,13 +6,14 @@ import type { InstitutionSummary } from '@/types/auth'
 import { UnitsProgramsTab } from './UnitsProgramsTab'
 import { PeriodsBatchesTab } from './PeriodsBatchesTab'
 import { CatalogCurriculaTab } from './CatalogCurriculaTab'
+import { SemesterPromotionTab } from './SemesterPromotionTab'
 
 export function AcademicsPage() {
   const { context, activeInstitutionId, platformRoles, memberships } = useAppStore()
   const isPlatformAdmin = platformRoles.some((r) => r === 'SUPER_ADMIN' || r === 'PLATFORM_ADMIN')
 
   const [selectedPlatformInstId, setSelectedPlatformInstId] = useState('')
-  const [activeTab, setActiveTab] = useState<'UNITS_PROGRAMS' | 'PERIODS_BATCHES' | 'CATALOG_CURRICULA'>('UNITS_PROGRAMS')
+  const [activeTab, setActiveTab] = useState<'UNITS_PROGRAMS' | 'PERIODS_BATCHES' | 'CATALOG_CURRICULA' | 'PROMOTION'>('UNITS_PROGRAMS')
 
   const { data: allInstitutions = [] } = useQuery({
     queryKey: ['institutions-min'],
@@ -77,6 +78,7 @@ export function AcademicsPage() {
           { id: 'UNITS_PROGRAMS', label: 'Units & Programs' },
           { id: 'PERIODS_BATCHES', label: 'Periods, Batches & Sections' },
           { id: 'CATALOG_CURRICULA', label: 'Course Catalog & Curricula' },
+          { id: 'PROMOTION', label: 'Semester Promotion' },
         ].map((t) => (
           <button
             key={t.id}
@@ -101,6 +103,9 @@ export function AcademicsPage() {
       )}
       {activeTab === 'CATALOG_CURRICULA' && (
         <CatalogCurriculaTab institutionId={targetInstitutionId} canManage={canManageAcademics} />
+      )}
+      {activeTab === 'PROMOTION' && (
+        <SemesterPromotionTab institutionId={targetInstitutionId} canManage={canManageAcademics} />
       )}
     </div>
   )

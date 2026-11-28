@@ -1,5 +1,7 @@
 export type ExamCycleType = 'REGULAR' | 'ARREAR' | 'SUPPLEMENTARY' | 'SUMMER' | 'ODE' | 'MAKEUP'
 
+export type ResultPublishStatus = 'DRAFT' | 'PENDING_APPROVAL' | 'PUBLISHED'
+
 export type ExamCycleStatus =
   | 'DRAFT'
   | 'REGISTRATION_OPEN'
@@ -39,6 +41,10 @@ export interface ExamCycle {
   late_fee_starts_at: string | null
   exam_starts_on: string | null
   exam_ends_on: string | null
+  result_publish_status?: ResultPublishStatus
+  result_submitted_at?: string | null
+  result_approved_at?: string | null
+  result_publish_remarks?: string | null
   created_at: string
   updated_at: string
 }
@@ -397,6 +403,9 @@ export interface ExamSemesterResultItem {
   total_grade_points: number
   sgpa: number
   overall_status: SemesterResultStatus
+  is_withheld?: boolean
+  withheld_reason?: string | null
+  pre_withhold_status?: string | null
   is_published: boolean
   published_at: string | null
 }

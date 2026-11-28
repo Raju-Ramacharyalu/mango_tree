@@ -12,6 +12,10 @@ import {
   Globe,
   Lock,
   Search,
+  Trophy,
+  ShieldAlert,
+  Send,
+  RotateCcw,
 } from 'lucide-react'
 import { supabase, fetchAllRows } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
@@ -26,6 +30,7 @@ import type {
 } from '@/types/exams'
 import { evaluateCourseGrade, normalizeCourseCode } from './bundleEngine'
 import { fetchInstitutionBranding, openBrandedPrintWindow, renderBrandedHeaderHtml, renderSignatureBlockHtml, renderWatermarkHtml, signPrivateAssets } from './printBranding'
+import { RankAndLedgerPanel } from './RankAndLedgerPanel'
 import { cn } from '@/utils/cn'
 
 interface Props {
@@ -84,10 +89,14 @@ export function ResultsProcessingTab({
   canPublish,
 }: Props) {
   const queryClient = useQueryClient()
-  const { session } = useAppStore()
+  const { session, platformRoles, memberships, activeInstitutionId } = useAppStore()
+  const activeMembership = memberships.find((m) => m.institution_id === activeInstitutionId)
+  const isPrincipalOrAdmin =
+    platformRoles.some((r) => r === 'SUPER_ADMIN' || r === 'PLATFORM_ADMIN') ||
+    (activeMembership?.roles ?? []).some((r) => r === 'INSTITUTION_ADMIN' || r === 'PRINCIPAL_DIRECTOR')
   const cieCsvRef = useRef<HTMLInputElement | null>(null)
 
-  const [subTab, setSubTab] = useState<'LEDGER' | 'SEMESTER'>('LEDGER')
+  const [subTab, setSubTab] = useState<'LEDGER' | 'SEMESTER' | 'RANK_LEDGER'>('LEDGER')
   const [programFilter, setProgramFilter] = useState('ALL')
   const [courseFilter, setCourseFilter] = useState('ALL')
   const [searchQuery, setSearchQuery] = useState('')
@@ -255,6 +264,9 @@ export function ResultsProcessingTab({
             total_grade_points: Number(row.total_grade_points ?? 0),
             sgpa: Number(row.sgpa ?? 0),
             overall_status: row.overall_status as SemesterResultStatus,
+            is_withheld: Boolean(row.is_withheld),
+            withheld_reason: (row.withheld_reason as string | null) ?? null,
+            pre_withhold_status: (row.pre_withhold_status as string | null) ?? null,
             is_published: Boolean(row.is_published),
             published_at: (row.published_at as string | null) ?? null,
           }
@@ -573,30 +585,100 @@ export function ResultsProcessingTab({
     },
   })
 
-  const togglePublishMutation = useMutation({
-    mutationFn: async (publish: boolean) => {
+  const submitApprovalMutation = useMutation({
+    mutationFn: async () => {
       if (!cycle) throw new Error('No active cycle.')
-      const now = publish ? new Date().toISOString() : null
-      const [cRes, sRes] = await Promise.all([
-        supabase
-          .from('exam_course_results')
-          .update({ is_published: publish, published_at: now, updated_by: session?.user.id ?? null })
-          .eq('institution_id', institutionId)
-          .eq('exam_cycle_id', cycle.id),
-        supabase
-          .from('exam_semester_results')
-          .update({ is_published: publish, published_at: now, updated_by: session?.user.id ?? null })
-          .eq('institution_id', institutionId)
-          .eq('exam_cycle_id', cycle.id),
-      ])
-      if (cRes.error) throw cRes.error
-      if (sRes.error) throw sRes.error
+      const remarks = window.prompt(
+        `Optional submission note for Principal approval (${cycle.code}):`,
+        'All bundles decoded, moderation & SGPA verified by COE'
+      )
+      if (remarks === null) return null
+      const { data, error } = await supabase.rpc('submit_results_for_approval', {
+        p_institution_id: institutionId,
+        p_exam_cycle_id: cycle.id,
+        p_remarks: remarks,
+        p_ignore_pending_third_val: false,
+      })
+      if (error) throw error
+      return data as { total_students: number; withheld_students: number }
     },
-    onSuccess: (_data, publish) => {
+    onSuccess: (res) => {
+      if (!res) return
+      queryClient.invalidateQueries({ queryKey: ['exam_cycles', institutionId] })
+      setNotice(
+        `Submitted ${cycle?.code} (${res.total_students} students, ${res.withheld_students} withheld) to Principal for final publication sign-off.`
+      )
+    },
+    onError: (err) => setNotice(err instanceof Error ? err.message : 'Submission failed'),
+  })
+
+  const approvePublishMutation = useMutation({
+    mutationFn: async () => {
+      if (!cycle) throw new Error('No active cycle.')
+      const remarks = window.prompt(`Principal Approval Note to publish ${cycle.code} results:`, 'Approved for publication')
+      if (remarks === null) return null
+      const { data, error } = await supabase.rpc('approve_and_publish_cycle_results', {
+        p_institution_id: institutionId,
+        p_exam_cycle_id: cycle.id,
+        p_remarks: remarks,
+      })
+      if (error) throw error
+      return data as { published_students: number; withheld_students: number }
+    },
+    onSuccess: (res) => {
+      if (!res) return
+      queryClient.invalidateQueries({ queryKey: ['exam_cycles', institutionId] })
       queryClient.invalidateQueries({ queryKey: ['exam_course_results', institutionId, cycle?.id] })
       queryClient.invalidateQueries({ queryKey: ['exam_semester_results', institutionId, cycle?.id] })
-      setNotice(publish ? `Results for ${cycle?.code} are now PUBLISHED.` : `Results for ${cycle?.code} moved back to UNPUBLISHED draft.`)
+      setNotice(
+        `APPROVED & PUBLISHED ${cycle?.code}: ${res.published_students} student results live (${res.withheld_students} withheld kept masked).`
+      )
     },
+    onError: (err) => setNotice(err instanceof Error ? err.message : 'Approval failed'),
+  })
+
+  const returnToDraftMutation = useMutation({
+    mutationFn: async () => {
+      if (!cycle) throw new Error('No active cycle.')
+      const reason = window.prompt(`Reason to return ${cycle.code} results to COE Draft:`, 'Reopened for corrections')
+      if (reason === null) return null
+      const { error } = await supabase.rpc('unpublish_or_return_cycle_results', {
+        p_institution_id: institutionId,
+        p_exam_cycle_id: cycle.id,
+        p_reason: reason,
+      })
+      if (error) throw error
+      return true
+    },
+    onSuccess: (ok) => {
+      if (!ok) return
+      queryClient.invalidateQueries({ queryKey: ['exam_cycles', institutionId] })
+      queryClient.invalidateQueries({ queryKey: ['exam_course_results', institutionId, cycle?.id] })
+      queryClient.invalidateQueries({ queryKey: ['exam_semester_results', institutionId, cycle?.id] })
+      setNotice(`Results for ${cycle?.code} returned to DRAFT (unpublished).`)
+    },
+    onError: (err) => setNotice(err instanceof Error ? err.message : 'Return to draft failed'),
+  })
+
+  const withholdStudentMutation = useMutation({
+    mutationFn: async ({ studentId, withhold, reason }: { studentId: string; withhold: boolean; reason: string | null }) => {
+      if (!cycle) throw new Error('No active cycle.')
+      const { error } = await supabase.rpc('toggle_student_result_withhold', {
+        p_institution_id: institutionId,
+        p_exam_cycle_id: cycle.id,
+        p_student_id: studentId,
+        p_withhold: withhold,
+        p_reason: reason,
+      })
+      if (error) throw error
+      return withhold
+    },
+    onSuccess: (withheld) => {
+      queryClient.invalidateQueries({ queryKey: ['exam_semester_results', institutionId, cycle?.id] })
+      queryClient.invalidateQueries({ queryKey: ['exam_course_results', institutionId, cycle?.id] })
+      setNotice(withheld ? 'Student result WITHHELD and masked from Student Portal.' : 'Student result RELEASED.')
+    },
+    onError: (err) => setNotice(err instanceof Error ? err.message : 'Withhold action failed'),
   })
 
   const handleCieCsvImport = (file: File) => {
@@ -794,7 +876,18 @@ export function ResultsProcessingTab({
             )}
           >
             <Award className="h-3.5 w-3.5" />
-            SGPA & Grade Cards ({semesterResults.length})
+            SGPA &amp; Grade Cards ({semesterResults.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('RANK_LEDGER')}
+            className={cn(
+              'inline-flex items-center gap-1 rounded px-3 py-1.5 font-medium',
+              subTab === 'RANK_LEDGER' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:text-slate-900'
+            )}
+          >
+            <Trophy className="h-3.5 w-3.5" />
+            Rank Lists &amp; A3 Ledger
           </button>
         </div>
       </div>
@@ -885,18 +978,62 @@ export function ResultsProcessingTab({
                   <Award className="h-3.5 w-3.5" />
                   {computeGradesMutation.isPending ? 'Computing...' : 'Compute Grades & SGPA'}
                 </button>
-                <button
-                  type="button"
-                  disabled={togglePublishMutation.isPending || semesterResults.length === 0}
-                  onClick={() => togglePublishMutation.mutate(!isPublished)}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40',
-                    isPublished ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'
-                  )}
-                >
-                  {isPublished ? <Lock className="h-3.5 w-3.5" /> : <Globe className="h-3.5 w-3.5" />}
-                  {isPublished ? 'Unpublish Results' : 'Publish Results'}
-                </button>
+                {(() => {
+                  const gateStatus = cycle.result_publish_status ?? (isPublished ? 'PUBLISHED' : 'DRAFT')
+                  if (gateStatus === 'DRAFT') {
+                    return (
+                      <button
+                        type="button"
+                        disabled={submitApprovalMutation.isPending || semesterResults.length === 0}
+                        onClick={() => submitApprovalMutation.mutate()}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40"
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        Submit for Principal Approval
+                      </button>
+                    )
+                  }
+                  if (gateStatus === 'PENDING_APPROVAL') {
+                    return (
+                      <>
+                        {isPrincipalOrAdmin ? (
+                          <button
+                            type="button"
+                            disabled={approvePublishMutation.isPending}
+                            onClick={() => approvePublishMutation.mutate()}
+                            className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
+                          >
+                            <Globe className="h-3.5 w-3.5" />
+                            Principal Approve &amp; Publish
+                          </button>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 border border-amber-300 px-2.5 py-1.5 text-xs font-semibold text-amber-900">
+                            <Lock className="h-3.5 w-3.5" /> Awaiting Principal Sign-Off
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          disabled={returnToDraftMutation.isPending}
+                          onClick={() => returnToDraftMutation.mutate()}
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" /> Return to Draft
+                        </button>
+                      </>
+                    )
+                  }
+                  return (
+                    <button
+                      type="button"
+                      disabled={returnToDraftMutation.isPending}
+                      onClick={() => returnToDraftMutation.mutate()}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-40"
+                    >
+                      <Lock className="h-3.5 w-3.5" />
+                      Unpublish / Reopen Draft
+                    </button>
+                  )
+                })()}
               </>
             )}
           </div>
@@ -980,6 +1117,17 @@ export function ResultsProcessingTab({
           )}
         </div>
       </div>
+
+      {/* SUB-TAB 4: RANK LISTS & A3 MASTER LEDGER */}
+      {subTab === 'RANK_LEDGER' && (
+        <RankAndLedgerPanel
+          institutionId={institutionId}
+          institutionName={institutionName}
+          cycle={cycle}
+          courseResults={courseResults}
+          semesterResults={semesterResults}
+        />
+      )}
 
       {/* SUB-TAB 1: CIE + DECODED SEE COURSE LEDGER */}
       {subTab === 'LEDGER' && (
@@ -1155,21 +1303,60 @@ export function ResultsProcessingTab({
                         >
                           {sr.overall_status}
                         </span>
-                        {sr.is_published && (
+                        {sr.is_published && !sr.is_withheld && (
                           <span className="ml-1.5 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">
                             Published
                           </span>
                         )}
+                        {sr.withheld_reason && (
+                          <p className="text-[10px] text-amber-800 mt-0.5 max-w-[180px] truncate" title={sr.withheld_reason}>
+                            Reason: {sr.withheld_reason}
+                          </p>
+                        )}
                       </td>
                       <td className="px-4 py-2.5 text-right">
-                        <button
-                          type="button"
-                          onClick={() => printGradeCards([sr])}
-                          className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
-                        >
-                          <Printer className="h-3 w-3" />
-                          Print A4
-                        </button>
+                        <div className="inline-flex items-center gap-1.5">
+                          {canPublish && (
+                            <button
+                              type="button"
+                              disabled={withholdStudentMutation.isPending}
+                              onClick={() => {
+                                const isWh = Boolean(sr.is_withheld || sr.overall_status === 'WITHHELD')
+                                if (isWh) {
+                                  if (window.confirm(`Release withheld result for ${sr.student_reg_no}?`)) {
+                                    withholdStudentMutation.mutate({ studentId: sr.student_id, withhold: false, reason: null })
+                                  }
+                                } else {
+                                  const reason = window.prompt(
+                                    `Enter reason to WITHHOLD result for ${sr.student_reg_no}:`,
+                                    'Malpractice Committee / Fee Due / Verification Pending'
+                                  )
+                                  if (reason !== null) {
+                                    withholdStudentMutation.mutate({ studentId: sr.student_id, withhold: true, reason })
+                                  }
+                                }
+                              }}
+                              className={cn(
+                                'inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium',
+                                sr.is_withheld || sr.overall_status === 'WITHHELD'
+                                  ? 'border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                                  : 'border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                              )}
+                            >
+                              <ShieldAlert className="h-3 w-3" />
+                              {sr.is_withheld || sr.overall_status === 'WITHHELD' ? 'Release' : 'Withhold'}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={Boolean(sr.is_withheld || sr.overall_status === 'WITHHELD')}
+                            onClick={() => printGradeCards([sr])}
+                            className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                          >
+                            <Printer className="h-3 w-3" />
+                            Print A4
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
