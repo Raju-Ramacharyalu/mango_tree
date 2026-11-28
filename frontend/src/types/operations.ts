@@ -135,6 +135,45 @@ export interface StudentPortalSnapshot {
     overall_status: string
     published_at: string | null
   } | null
+  published_cycles?: Array<{
+    id: string
+    code: string
+    name: string
+    cycle_type: string
+    academic_year: string
+    exam_ends_on: string | null
+    course_count: number
+  }>
+  consolidated_summary?: {
+    total_courses: number
+    passed_courses: number
+    active_backlogs: number
+    credits_attempted: number
+    credits_earned: number
+    cgpa: number
+  }
+  consolidated_results?: Array<{
+    course_id: string
+    course_code: string
+    course_title: string
+    credits: number
+    semester_number: number
+    cie_marks: number | null
+    see_marks: number | null
+    total_marks: number | null
+    grade_code: string | null
+    grade_point: number | null
+    result_status: string
+    is_graced: boolean
+    grace_marks_added: number
+    attempt_number: number
+    attempt_count: number
+    is_reattempt: boolean
+    latest_cycle_id: string
+    latest_cycle_code: string
+    latest_cycle_name: string
+    latest_cycle_type: string
+  }>
   course_results?: Array<{
     course_code: string
     course_title: string
@@ -145,5 +184,10 @@ export interface StudentPortalSnapshot {
     grade_code: string | null
     grade_point: number | null
     result_status: string
+    registration_category?: string
+    attempt_number?: number
+    is_arrear?: boolean
+    is_graced?: boolean
+    grace_marks_added?: number
   }>
 }

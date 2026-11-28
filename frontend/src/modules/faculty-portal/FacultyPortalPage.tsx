@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
+import type { ExamCycle } from '@/types/exams'
 import type { FacultyPortalSnapshot } from '@/types/facultyPortal'
 import { FacultyCieMarksPanel } from './FacultyCieMarksPanel'
 import { FacultyIaDrafterPanel } from './FacultyIaDrafterPanel'
@@ -47,10 +48,11 @@ export function FacultyPortalPage() {
 
   const [view, setView] = useState<FacultyView>('home')
   const [selectedIaId, setSelectedIaId] = useState('')
+  const [selectedFacultyCycleId, setSelectedFacultyCycleId] = useState('')
   const [previewInput, setPreviewInput] = useState('')
   const [activePreviewCode, setActivePreviewCode] = useState('')
   const [isDesktopViewport, setIsDesktopViewport] = useState(() => window.innerWidth >= 768)
-  const [forceMobilePreview, setForceMobilePreview] = useState(false)
+  const [forceMobilePreview, setForceMobilePreview] = useState(true)
 
   useEffect(() => {
     const onResize = () => setIsDesktopViewport(window.innerWidth >= 768)
@@ -58,13 +60,31 @@ export function FacultyPortalPage() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
+  const { data: facultyCycles = [] } = useQuery<ExamCycle[]>({
+    queryKey: ['faculty_portal_cycles', activeInstitutionId],
+    enabled: context === 'INSTITUTION' && Boolean(activeInstitutionId),
+    queryFn: async () => {
+      const { data, error: cErr } = await supabase
+        .from('exam_cycles')
+        .select('*')
+        .eq('institution_id', activeInstitutionId!)
+        .is('deleted_at', null)
+        .order('is_default_active', { ascending: false })
+        .order('created_at', { ascending: false })
+      if (cErr) throw cErr
+      return (data ?? []) as ExamCycle[]
+    },
+  })
+
+  const effectiveFacultyCycleId = selectedFacultyCycleId || activeExamCycleId || null
+
   const { data: snapshot, isLoading, error } = useQuery<FacultyPortalSnapshot>({
-    queryKey: ['faculty_portal_snapshot', activeInstitutionId, activeExamCycleId, activePreviewCode],
+    queryKey: ['faculty_portal_snapshot', activeInstitutionId, effectiveFacultyCycleId, activePreviewCode],
     enabled: context === 'INSTITUTION' && Boolean(activeInstitutionId),
     queryFn: async () => {
       const { data, error: rpcErr } = await supabase.rpc('get_faculty_portal_snapshot', {
         p_institution_id: activeInstitutionId!,
-        p_exam_cycle_id: activeExamCycleId ?? null,
+        p_exam_cycle_id: effectiveFacultyCycleId,
         p_preview_faculty_code: activePreviewCode.trim() || null,
       })
       if (rpcErr) throw rpcErr
@@ -102,12 +122,12 @@ export function FacultyPortalPage() {
   }
 
   const openIaSetter = (targetId?: string) => {
-    if (iaAllocations.length === 0) {
-      window.alert('No IA Question Paper assignments found for your Faculty ID in this cycle.')
-      return
+    if (iaAllocations.length > 0) {
+      const chosen = targetId || (iaAllocations.find((i) => i.status !== 'SUBMITTED') ?? iaAllocations[0]).id
+      setSelectedIaId(chosen)
+    } else {
+      setSelectedIaId('')
     }
-    const chosen = targetId || (iaAllocations.find((i) => i.status !== 'SUBMITTED') ?? iaAllocations[0]).id
-    setSelectedIaId(chosen)
     setView('ia_drafter')
   }
 
@@ -231,6 +251,29 @@ export function FacultyPortalPage() {
       )
     }
     if (view === 'ia_drafter') {
+      if (iaAllocations.length === 0) {
+        return (
+          <div className="space-y-4">
+            <button
+              type="button"
+              onClick={() => setView('home')}
+              className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:underline"
+            >
+              <ChevronLeft className="h-4 w-4" /> Back to Portal
+            </button>
+            <div className="rounded-xl border border-slate-200 bg-white p-6 text-center space-y-2">
+              <BookOpen className="h-8 w-8 text-indigo-400 mx-auto" />
+              <h3 className="text-sm font-bold text-slate-900">
+                No IA Question Papers Assigned in {snapshot?.cycle?.code ?? 'Current Cycle'}
+              </h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Switch the Exam Cycle dropdown above if your IA paper was assigned under another cycle, or ask your HOD
+                to assign your course in <strong>BOS, BOE &amp; CIE → IA QP Allocations</strong>.
+              </p>
+            </div>
+          </div>
+        )
+      }
       return (
         <FacultyIaDrafterPanel
           institutionId={activeInstitutionId}
@@ -394,10 +437,25 @@ export function FacultyPortalPage() {
             Unified workspace for CIE marks, PIN-encrypted IA QPs, SEE appointments, invigilation, evaluation, and BOS syllabi.
           </p>
         </div>
-        {isDesktopViewport && fac && (
-          <button
-            type="button"
-            onClick={() => setForceMobilePreview((v) => !v)}
+        <div className="flex flex-wrap items-center gap-2">
+          {facultyCycles.length > 0 && (
+            <select
+              value={selectedFacultyCycleId || snapshot?.cycle?.id || ''}
+              onChange={(e) => setSelectedFacultyCycleId(e.target.value)}
+              className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 max-w-[210px]"
+              title="Exam Cycle for Duties & IA QPs"
+            >
+              {facultyCycles.map((c) => (
+                <option key={c.id} value={c.id}>
+                  Cycle: {c.code}
+                </option>
+              ))}
+            </select>
+          )}
+          {isDesktopViewport && fac && (
+            <button
+              type="button"
+              onClick={() => setForceMobilePreview((v) => !v)}
             className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
           >
             {forceMobilePreview ? (
@@ -410,7 +468,8 @@ export function FacultyPortalPage() {
               </>
             )}
           </button>
-        )}
+          )}
+        </div>
       </div>
 
       {renderPreviewBar()}
