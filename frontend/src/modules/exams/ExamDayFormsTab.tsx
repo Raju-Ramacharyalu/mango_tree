@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Printer, Download, FileSpreadsheet, ClipboardCheck, LayoutGrid, FileText } from 'lucide-react'
+import { Printer, Download, FileSpreadsheet, ClipboardCheck, LayoutGrid, FileText, Lock, Unlock } from 'lucide-react'
 import { supabase, fetchAllRows } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
 import type {
@@ -193,6 +193,26 @@ export function ExamDayFormsTab({ institutionId, institutionName, cycle, canMana
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['exam_seat_allotments', institutionId, cycle?.id, activeRun?.id] })
+    },
+  })
+
+  const isRunLocked = activeRun?.status === 'LOCKED'
+
+  const toggleFormALockMutation = useMutation({
+    mutationFn: async (nextLocked: boolean) => {
+      if (!activeRun) return
+      const { error } = await supabase
+        .from('exam_room_allotment_runs')
+        .update({
+          status: nextLocked ? 'LOCKED' : 'PUBLISHED',
+          updated_by: session?.user.id ?? null,
+        })
+        .eq('id', activeRun.id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['exam_allotment_runs', institutionId, cycle?.id] })
+      queryClient.invalidateQueries({ queryKey: ['exam_bundle_sources', institutionId, cycle?.id] })
     },
   })
 
@@ -806,7 +826,7 @@ export function ExamDayFormsTab({ institutionId, institutionName, cycle, canMana
                         <td className="px-3 py-2">
                           <input
                             type="text"
-                            disabled={!canManage}
+                            disabled={!canManage || isRunLocked}
                             defaultValue={s.booklet_number ?? ''}
                             placeholder="Optional Sl.No"
                             onBlur={(e) => {
@@ -820,7 +840,7 @@ export function ExamDayFormsTab({ institutionId, institutionName, cycle, canMana
                         </td>
                         <td className="px-3 py-2">
                           <select
-                            disabled={!canManage}
+                            disabled={!canManage || isRunLocked}
                             value={s.attendance_status}
                             onChange={(e) =>
                               updateSeatMutation.mutate({
@@ -851,7 +871,42 @@ export function ExamDayFormsTab({ institutionId, institutionName, cycle, canMana
       {/* FORM A: AUTO-SYNCED CONSOLIDATED STATEMENT */}
       {subTab === 'FORM_A' && (
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-3">
+            <div className="flex items-center gap-2 text-xs">
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 font-semibold',
+                  isRunLocked
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                    : 'bg-amber-100 text-amber-800 border border-amber-200'
+                )}
+              >
+                {isRunLocked ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                Form A Status: {isRunLocked ? 'LOCKED (Ready for Evaluation Bundles)' : activeRun?.status}
+              </span>
+              {canManage && (
+                <button
+                  type="button"
+                  disabled={toggleFormALockMutation.isPending}
+                  onClick={() => {
+                    const msg = isRunLocked
+                      ? 'Unlock Form A? This re-opens Form B absentee/MPC editing for this session.'
+                      : 'Lock Form A now? Absentees and Malpractice (MPC) records will freeze and become eligible for Evaluation Bundles.'
+                    if (window.confirm(msg)) toggleFormALockMutation.mutate(!isRunLocked)
+                  }}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs font-semibold',
+                    isRunLocked
+                      ? 'border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                      : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                  )}
+                >
+                  {isRunLocked ? <Unlock className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
+                  {isRunLocked ? 'Unlock Form A' : 'Lock Form A (Freeze Absentees & MPC)'}
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() =>
@@ -884,6 +939,7 @@ export function ExamDayFormsTab({ institutionId, institutionName, cycle, canMana
               <Printer className="h-3.5 w-3.5" />
               Print Form A (A4 Landscape)
             </button>
+            </div>
           </div>
 
           <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">

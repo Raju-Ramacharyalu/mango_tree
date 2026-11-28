@@ -14,6 +14,7 @@ import { HallTicketsTab } from './HallTicketsTab'
 import { RoomAllotmentsTab } from './RoomAllotmentsTab'
 import { ExamDayFormsTab } from './ExamDayFormsTab'
 import { BundlesDecodingTab } from './BundlesDecodingTab'
+import { EvaluationDeskTab } from './EvaluationDeskTab'
 import { ResultsProcessingTab } from './ResultsProcessingTab'
 import { RevaluationEngineTab } from '@/modules/analytics/RevaluationEngineTab'
 import { BrandingAssetsTab } from './BrandingAssetsTab'
@@ -29,6 +30,7 @@ const EXAM_TAB_DEFS: Array<{ id: ExamTabId; label: string }> = [
   { id: 'allotments', label: 'Room Allotments' },
   { id: 'forms-qpds', label: 'A/B Forms & QPDS' },
   { id: 'bundles', label: 'Bundles & Decoding' },
+  { id: 'eval-desk', label: 'Evaluation Desk' },
   { id: 'results', label: 'Marks & Results' },
   { id: 'revaluation', label: 'Revaluation Engine' },
   { id: 'branding', label: 'Branding & Photos' },
@@ -314,6 +316,14 @@ export function ExamsPage() {
           institutionName={activeMembership?.institution.name ?? 'Institution'}
           cycle={activeCycle}
           canDecode={canDecodeBundles}
+        />
+      )}
+      {activeTab === 'eval-desk' && (
+        <EvaluationDeskTab
+          institutionId={activeInstitutionId}
+          institutionName={activeMembership?.institution.name ?? 'Institution'}
+          cycle={activeCycle}
+          canConfigurePatterns={canDecodeBundles}
         />
       )}
       {activeTab === 'results' && (

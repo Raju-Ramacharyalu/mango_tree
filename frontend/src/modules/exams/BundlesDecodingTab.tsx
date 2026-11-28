@@ -31,6 +31,7 @@ import {
   type BundleSourceScript,
 } from './bundleEngine'
 import { fetchInstitutionBranding, openBrandedPrintWindow, renderBrandedHeaderHtml, renderSignatureBlockHtml, signPrivateAssets } from './printBranding'
+import { BUILTIN_EVALUATION_PATTERNS } from './evaluationPatterns'
 import { cn } from '@/utils/cn'
 
 interface Props {
@@ -89,6 +90,8 @@ export function BundlesDecodingTab({ institutionId, institutionName, cycle, canD
   const [splitSeriesBranches, setSplitSeriesBranches] = useState('CS, CSE')
   const [splitAllBranches, setSplitAllBranches] = useState(false)
   const [shuffleDummyCodes, setShuffleDummyCodes] = useState(true)
+  const [requireLockedFormA, setRequireLockedFormA] = useState(true)
+  const [selectedPatternCode, setSelectedPatternCode] = useState('VTU_10Q_5MOD_OR')
   const [includeUnseatedApproved, setIncludeUnseatedApproved] = useState(false)
   const [defaultSeeMax, setDefaultSeeMax] = useState('100')
   const [defaultSeeScale, setDefaultSeeScale] = useState('50')
@@ -164,7 +167,7 @@ export function BundlesDecodingTab({ institutionId, institutionName, cycle, canD
 
   // Source scripts available to bundle (Present seats from Form B + optional approved unseated courses e.g. PG/Labs)
   const { data: sourceScripts = [] } = useQuery<BundleSourceScript[]>({
-    queryKey: ['exam_bundle_sources', institutionId, cycle?.id, includeUnseatedApproved],
+    queryKey: ['exam_bundle_sources', institutionId, cycle?.id, includeUnseatedApproved, requireLockedFormA],
     enabled: Boolean(cycle?.id && canDecode),
     queryFn: async () => {
       const [seatsRes, existingScriptsRes] = await Promise.all([
@@ -176,7 +179,8 @@ export function BundlesDecodingTab({ institutionId, institutionName, cycle, canD
               effective_course_code, attendance_status, booklet_number,
               students (registration_number, full_name),
               course_catalog (course_code, title),
-              programs (code, program_level)
+              programs (code, program_level),
+              exam_room_allotment_runs!inner (status)
             `)
             .eq('institution_id', institutionId)
             .eq('exam_cycle_id', cycle!.id)
@@ -203,6 +207,8 @@ export function BundlesDecodingTab({ institutionId, institutionName, cycle, canD
       const seenRegCourse = new Set<string>()
 
       for (const row of seatsRes.data ?? []) {
+        const runInfo = unwrap(row.exam_room_allotment_runs as { status: string } | { status: string }[] | null)
+        if (requireLockedFormA && runInfo?.status !== 'LOCKED') continue
         const rcId = row.registration_course_id as string
         if (alreadyBundled.has(rcId) || seenRegCourse.has(rcId)) continue
         seenRegCourse.add(rcId)
@@ -356,6 +362,8 @@ export function BundlesDecodingTab({ institutionId, institutionName, cycle, canD
           booklet_number: (row.booklet_number as string | null) ?? null,
           see_marks_raw: row.see_marks_raw !== null ? Number(row.see_marks_raw) : null,
           see_marks_scaled: row.see_marks_scaled !== null ? Number(row.see_marks_scaled) : null,
+          moderation_marks: row.moderation_marks != null ? Number(row.moderation_marks) : null,
+          final_see_marks: row.final_see_marks != null ? Number(row.final_see_marks) : null,
           is_absent: Boolean(row.is_absent),
           is_malpractice: Boolean(row.is_malpractice),
           evaluation_status: row.evaluation_status as ScriptEvalStatus,
@@ -406,6 +414,10 @@ export function BundlesDecodingTab({ institutionId, institutionName, cycle, canD
             script_count: plan.scripts.length,
             see_max_marks: seeMax,
             see_scale_to: seeScale,
+            evaluation_pattern_code: selectedPatternCode,
+            evaluation_pattern_config:
+              BUILTIN_EVALUATION_PATTERNS.find((p) => p.code === selectedPatternCode) ?? BUILTIN_EVALUATION_PATTERNS[0],
+            locked_from_form_a: requireLockedFormA,
             status: 'CREATED',
             created_by: session?.user.id ?? null,
             updated_by: session?.user.id ?? null,
@@ -564,11 +576,12 @@ export function BundlesDecodingTab({ institutionId, institutionName, cycle, canD
       const upsertRows = bundleScripts.map((s) => {
         const existingCie = cieMap.get(s.registration_course_id)
         const rowCieMax = existingCie?.cieMax ?? cieMax
+        const effectiveRaw = s.final_see_marks ?? s.see_marks_raw
         const seeVal =
           s.see_marks_scaled !== null
             ? s.see_marks_scaled
-            : s.see_marks_raw !== null
-              ? Number(((s.see_marks_raw / Math.max(1, bundle.see_max_marks)) * seeMaxScaled).toFixed(2))
+            : effectiveRaw !== null
+              ? Number(((effectiveRaw / Math.max(1, bundle.see_max_marks)) * seeMaxScaled).toFixed(2))
               : null
         return {
           institution_id: institutionId,
@@ -863,29 +876,61 @@ export function BundlesDecodingTab({ institutionId, institutionName, cycle, canD
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">SEE Raw Max</label>
-                <input
-                  type="number"
-                  min={10}
-                  value={defaultSeeMax}
-                  onChange={(e) => setDefaultSeeMax(e.target.value)}
+                <label className="block text-xs font-semibold text-slate-700 mb-1">QP Evaluation Pattern</label>
+                <select
+                  value={selectedPatternCode}
+                  onChange={(e) => {
+                    const code = e.target.value
+                    setSelectedPatternCode(code)
+                    const pat = BUILTIN_EVALUATION_PATTERNS.find((x) => x.code === code)
+                    if (pat) {
+                      setDefaultSeeMax(String(pat.max_raw_marks))
+                      setDefaultSeeScale(String(pat.scale_to_marks))
+                    }
+                  }}
                   className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-xs"
-                />
+                >
+                  {BUILTIN_EVALUATION_PATTERNS.map((pat) => (
+                    <option key={pat.code} value={pat.code}>
+                      {pat.name}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Scale SEE To</label>
-                <input
-                  type="number"
-                  min={10}
-                  value={defaultSeeScale}
-                  onChange={(e) => setDefaultSeeScale(e.target.value)}
-                  className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-xs"
-                />
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Max → Scale</label>
+                <div className="flex gap-1">
+                  <input
+                    type="number"
+                    min={10}
+                    value={defaultSeeMax}
+                    onChange={(e) => setDefaultSeeMax(e.target.value)}
+                    className="w-1/2 rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                    title="SEE Raw Max"
+                  />
+                  <input
+                    type="number"
+                    min={10}
+                    value={defaultSeeScale}
+                    onChange={(e) => setDefaultSeeScale(e.target.value)}
+                    className="w-1/2 rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                    title="Scale SEE To"
+                  />
+                </div>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
               <div className="flex flex-wrap items-center gap-4 text-xs text-slate-700">
+                <label className="inline-flex items-center gap-1.5 font-semibold text-emerald-800">
+                  <input
+                    type="checkbox"
+                    checked={requireLockedFormA}
+                    onChange={(e) => setRequireLockedFormA(e.target.checked)}
+                    className="rounded border-emerald-400 text-emerald-600"
+                  />
+                  Require Locked Form A (Exclude Absentees &amp; Isolate MPC)
+                </label>
                 <label className="inline-flex items-center gap-1.5">
                   <input
                     type="checkbox"

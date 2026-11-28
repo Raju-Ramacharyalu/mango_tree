@@ -17,6 +17,7 @@ export type ExamTabId =
   | 'allotments'
   | 'forms-qpds'
   | 'bundles'
+  | 'eval-desk'
   | 'results'
   | 'revaluation'
   | 'branding'
@@ -61,6 +62,7 @@ export const ALL_EXAM_TABS: ExamTabId[] = [
   'allotments',
   'forms-qpds',
   'bundles',
+  'eval-desk',
   'results',
   'revaluation',
   'branding',
@@ -238,7 +240,7 @@ export function resolveUserAccess(params: {
       allowedExamTabs = ['fees', 'registrations']
       canManageRegistrations = true
     } else if (instRoles.includes('EXAM_STAFF')) {
-      allowedExamTabs = ['registrations', 'timetable', 'appearing', 'hall-tickets', 'allotments', 'forms-qpds']
+      allowedExamTabs = ['registrations', 'timetable', 'appearing', 'hall-tickets', 'allotments', 'forms-qpds', 'eval-desk']
       canManageRegistrations = true
     } else if (instRoles.includes('DEPT_COORDINATOR')) {
       allowedExamTabs = ['registrations', 'timetable', 'appearing', 'hall-tickets', 'forms-qpds']
@@ -247,7 +249,7 @@ export function resolveUserAccess(params: {
       allowedExamTabs = ['timetable', 'appearing', 'forms-qpds', 'results']
       canManageRegistrations = true
     } else if (instRoles.includes('EVALUATOR')) {
-      allowedExamTabs = ['results']
+      allowedExamTabs = ['eval-desk']
     } else {
       allowedExamTabs = ['timetable', 'hall-tickets', 'results']
     }

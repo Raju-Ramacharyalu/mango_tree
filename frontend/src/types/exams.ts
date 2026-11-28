@@ -305,6 +305,8 @@ export interface ExamScriptBundle {
   script_count: number
   see_max_marks: number
   see_scale_to: number
+  evaluation_pattern_code?: string
+  locked_from_form_a?: boolean
   evaluator_staff_id: string | null
   evaluator_name: string | null
   status: BundleStatus
@@ -331,6 +333,8 @@ export interface ExamBundleScriptItem {
   booklet_number: string | null
   see_marks_raw: number | null
   see_marks_scaled: number | null
+  moderation_marks?: number | null
+  final_see_marks?: number | null
   is_absent: boolean
   is_malpractice: boolean
   evaluation_status: ScriptEvalStatus
