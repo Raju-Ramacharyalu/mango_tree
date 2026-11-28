@@ -13,6 +13,7 @@ import {
   Sparkles,
   Check,
   XCircle,
+  Users,
 } from 'lucide-react'
 import { supabase } from '@/services/supabase'
 import { useAppStore } from '@/app/useAppStore'
@@ -149,6 +150,9 @@ export function CourseRegistrationTab({
   const [minCreditsCap, setMinCreditsCap] = useState('12')
   const [maxCreditsCap, setMaxCreditsCap] = useState('28')
   const [allowPhase1Override, setAllowPhase1Override] = useState(false)
+  const [showBulkCore, setShowBulkCore] = useState(false)
+  const [bulkCoreBranch, setBulkCoreBranch] = useState('')
+  const [bulkCoreSem, setBulkCoreSem] = useState('3')
 
   // Inline target Exam Cycle for Summer / ODE (independent of global sidebar)
   const [selectedSpecialCycleId, setSelectedSpecialCycleId] = useState<string>(cycle?.id ?? '')
@@ -336,6 +340,14 @@ export function CourseRegistrationTab({
     },
   })
 
+  // Auto-load student's already-registered Phase 1 courses into checkboxes when looking them up
+  useEffect(() => {
+    if (mode !== 'PHASE1' || !activeStudent) return
+    if (existingPhase1CourseIds.length > 0) {
+      setSelectedCourseIds(existingPhase1CourseIds)
+    }
+  }, [mode, activeStudent?.id, existingPhase1CourseIds])
+
   const passedCourseIds = useMemo(() => {
     const set = new Set<string>()
     for (const r of latestAttempts) {
@@ -486,6 +498,105 @@ export function CourseRegistrationTab({
       .map((sc) => sc.course_id)
     setSelectedCourseIds(Array.from(new Set([...existingPhase1CourseIds, ...coreIds])))
   }
+
+  const bulkCoreBranches = useMemo(
+    () => Array.from(new Set(students.map((s) => s.program_code).filter(Boolean))).sort(),
+    [students]
+  )
+
+  const bulkCoreCohortMutation = useMutation({
+    mutationFn: async () => {
+      const targetSem = Number(bulkCoreSem)
+      if (!bulkCoreBranch || Number.isNaN(targetSem)) {
+        throw new Error('Select a Branch and Semester.')
+      }
+      if ((targetSem % 2 !== 0) !== (activeTerm === 'ODD')) {
+        throw new Error(`Term parity mismatch: Active term is ${activeTerm}, cannot bulk-register Sem ${targetSem}.`)
+      }
+      const cohortStudents = students.filter(
+        (s) => s.program_code === bulkCoreBranch && s.current_sem === targetSem && s.program_id && s.current_period_id
+      )
+      if (cohortStudents.length === 0) {
+        throw new Error(`No active students found in ${bulkCoreBranch} Semester ${targetSem}.`)
+      }
+      const programId = cohortStudents[0].program_id!
+      const periodId = cohortStudents[0].current_period_id!
+      const sampleScheme = cohortStudents.find((s) => s.scheme_batch != null)?.scheme_batch ?? null
+
+      const { data: curRows, error: cErr } = await supabase
+        .from('curricula')
+        .select('id, scheme_batch, version_number')
+        .eq('institution_id', institutionId)
+        .eq('program_id', programId)
+        .eq('is_active', true)
+        .is('deleted_at', null)
+        .order('scheme_batch', { ascending: false })
+        .order('version_number', { ascending: false })
+      if (cErr) throw cErr
+      const matched =
+        (sampleScheme !== null ? (curRows ?? []).find((c) => Number(c.scheme_batch) === Number(sampleScheme)) : null) ??
+        (curRows ?? [])[0]
+      if (!matched) throw new Error(`No active curriculum found for ${bulkCoreBranch}. Configure it in Academics → Curricula first.`)
+
+      const { data: ccRows, error: ccErr } = await supabase
+        .from('curriculum_courses')
+        .select('course_id, credits, is_elective')
+        .eq('curriculum_id', matched.id)
+        .eq('academic_period_id', periodId)
+        .eq('is_active', true)
+        .eq('is_elective', false)
+      if (ccErr) throw ccErr
+      if (!ccRows || ccRows.length === 0) {
+        throw new Error(`No mandatory Core courses mapped in curriculum for ${bulkCoreBranch} Sem ${targetSem}.`)
+      }
+
+      const catalogById = new Map(catalogCourses.map((c) => [c.id, c]))
+      const rows = cohortStudents.flatMap((stu) =>
+        ccRows
+          .map((cc) => {
+            const cat = catalogById.get(cc.course_id as string)
+            if (!cat) return null
+            return {
+              institution_id: institutionId,
+              academic_year: activeAcademicYear.trim(),
+              term: activeTerm,
+              student_id: stu.id,
+              program_id: stu.program_id!,
+              academic_period_id: stu.current_period_id,
+              semester_number: targetSem,
+              course_id: cat.id,
+              course_code: cat.course_code,
+              course_type: cat.is_online ? 'ONLINE' : (cat.category_code ?? 'CORE'),
+              credits: Number(cc.credits ?? cat.default_credits),
+              registration_source: 'COHORT_CORE',
+              status: 'ACTIVE',
+              created_by: session?.user.id ?? null,
+              updated_by: session?.user.id ?? null,
+            }
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null)
+      )
+
+      const chunkSize = 400
+      for (let i = 0; i < rows.length; i += chunkSize) {
+        const { error } = await supabase
+          .from('academic_course_registrations')
+          .upsert(rows.slice(i, i + chunkSize), {
+            onConflict: 'institution_id,academic_year,term,student_id,course_id',
+          })
+        if (error) throw error
+      }
+      return { studentsCount: cohortStudents.length, coreCount: ccRows.length, totalRows: rows.length }
+    },
+    onSuccess: (res) => {
+      setErrorMsg(null)
+      setShowBulkCore(false)
+      setNotice(
+        `Bulk Core Registration complete: ${res.studentsCount} students in ${bulkCoreBranch} Sem ${bulkCoreSem} registered for ${res.coreCount} Core courses (${res.totalRows} rows saved to ${activeAcademicYear} ${activeTerm}).`
+      )
+    },
+    onError: (err) => setErrorMsg(err instanceof Error ? err.message : 'Bulk Core registration failed'),
+  })
 
   const savePhase1Mutation = useMutation({
     mutationFn: async () => {
@@ -921,6 +1032,14 @@ export function CourseRegistrationTab({
             />
             <button
               type="button"
+              onClick={() => setShowBulkCore((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
+            >
+              <Users className="h-3.5 w-3.5" />
+              Bulk Cohort Core Reg
+            </button>
+            <button
+              type="button"
               onClick={() => csvInputRef.current?.click()}
               className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
             >
@@ -941,6 +1060,50 @@ export function CourseRegistrationTab({
         <div className="flex items-center gap-2 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
           <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" />
           {errorMsg}
+        </div>
+      )}
+
+      {showBulkCore && mode === 'PHASE1' && canManage && (
+        <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 p-4 flex flex-wrap items-end gap-3 text-xs">
+          <div>
+            <label className="block font-semibold text-indigo-950 mb-1">Branch</label>
+            <select
+              value={bulkCoreBranch}
+              onChange={(e) => setBulkCoreBranch(e.target.value)}
+              className="rounded border border-indigo-300 bg-white px-2.5 py-1.5"
+            >
+              <option value="">Select Branch...</option>
+              {bulkCoreBranches.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block font-semibold text-indigo-950 mb-1">Semester</label>
+            <select
+              value={bulkCoreSem}
+              onChange={(e) => setBulkCoreSem(e.target.value)}
+              className="rounded border border-indigo-300 bg-white px-2.5 py-1.5"
+            >
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                <option key={s} value={String(s)}>Semester {s}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            disabled={!bulkCoreBranch || bulkCoreCohortMutation.isPending}
+            onClick={() => bulkCoreCohortMutation.mutate()}
+            className="rounded-md bg-indigo-600 px-4 py-1.5 font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
+          >
+            {bulkCoreCohortMutation.isPending
+              ? 'Registering Cohort...'
+              : `Register All Core Courses (${activeAcademicYear} ${activeTerm})`}
+          </button>
+          <p className="text-[11px] text-indigo-900">
+            Auto-attaches all non-elective Core courses from the cohort&apos;s matched Scheme curriculum; add Electives &amp;
+            ONLINE courses via CSV or per student afterwards.
+          </p>
         </div>
       )}
 

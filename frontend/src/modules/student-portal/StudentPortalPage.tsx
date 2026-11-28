@@ -171,7 +171,8 @@ export function StudentPortalPage() {
   }, [snapshot?.consolidated_results])
 
   const printHallTicket = async () => {
-    if (!activeInstitutionId || !snapshot?.student || !snapshot.hall_ticket || !snapshot.cycle) return
+    const htCycle = snapshot?.upcoming_cycle ?? snapshot?.cycle
+    if (!activeInstitutionId || !snapshot?.student || !snapshot.hall_ticket || !htCycle) return
     const branding = await fetchInstitutionBranding(
       activeInstitutionId,
       activeMembership?.institution.name ?? 'Institution'
@@ -182,10 +183,10 @@ export function StudentPortalPage() {
     ])
     const coeSig = branding.coe_signature_path ? (sigMap.get(branding.coe_signature_path) ?? null) : null
     const prinSig = branding.principal_signature_path ? (sigMap.get(branding.principal_signature_path) ?? null) : null
-    const courses = snapshot.registered_courses ?? []
+    const courses = (snapshot.registered_courses ?? []).filter((c) => !c.is_online_exempt && !c.is_cie_only)
 
     openBrandedPrintWindow({
-      title: `Hall_Ticket_${snapshot.student.registration_number}_${snapshot.cycle.code}`,
+      title: `Hall_Ticket_${snapshot.student.registration_number}_${htCycle.code}`,
       landscape: false,
       branding,
       watermarkMode: 'per-page',
@@ -194,15 +195,15 @@ export function StudentPortalPage() {
         <div class="doc-body" style="border:1.5px solid #1e293b;padding:14px">
           ${renderBrandedHeaderHtml(
             branding,
-            `PROVISIONAL ADMISSION / HALL TICKET — ${snapshot.cycle.code}`,
-            `${snapshot.cycle.name} (${snapshot.cycle.cycle_type})`
+            `PROVISIONAL ADMISSION / HALL TICKET — ${htCycle.code}`,
+            `${htCycle.name} (${htCycle.cycle_type})`
           )}
           <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:10px">
             <table style="flex:1;margin:0">
               <tbody>
                 <tr><th style="width:120px">USN</th><td style="font-family:monospace;font-weight:700">${escapeHtml(snapshot.student.registration_number)}</td></tr>
                 <tr><th>Student Name</th><td><strong>${escapeHtml(snapshot.student.full_name)}</strong></td></tr>
-                <tr><th>Program / Sem</th><td>${escapeHtml(snapshot.student.program_code)} — ${escapeHtml(snapshot.cycle.semester_label || `Sem ${snapshot.student.current_sem}`)}</td></tr>
+                <tr><th>Program / Sem</th><td>${escapeHtml(snapshot.student.program_code)} — ${escapeHtml(snapshot.upcoming_cycle ? `Sem ${snapshot.student.current_sem}` : (snapshot.cycle?.semester_label || `Sem ${snapshot.student.current_sem}`))}</td></tr>
                 <tr><th>Ticket / Code</th><td style="font-family:monospace">${escapeHtml(snapshot.hall_ticket.ticket_number)} · ${escapeHtml(snapshot.hall_ticket.verification_code)}</td></tr>
               </tbody>
             </table>
@@ -436,6 +437,8 @@ export function StudentPortalPage() {
   }
 
   const stu = snapshot?.student
+  const currentSubjects = snapshot?.current_subjects ?? []
+  const upcomingCycle = snapshot?.upcoming_cycle ?? null
   const courses = snapshot?.registered_courses ?? []
   const courseResults = snapshot?.course_results ?? []
   const consolidatedResults = snapshot?.consolidated_results ?? []
@@ -764,34 +767,64 @@ export function StudentPortalPage() {
 
   const renderExamsContent = () => (
     <div className="space-y-2.5">
-      {courses.length === 0 ? (
-        <div className="rounded-2xl bg-white border border-slate-200 p-6 text-center text-xs text-slate-500">
-          No upcoming exam timetable slots found for {snapshot?.cycle?.code ?? 'active cycle'}.
+      {!upcomingCycle || courses.length === 0 ? (
+        <div className="rounded-2xl bg-white border border-slate-200 p-6 text-center space-y-1.5">
+          <Calendar className="h-7 w-7 text-slate-300 mx-auto" />
+          <p className="text-xs font-bold text-slate-800">
+            No Upcoming Exams Scheduled for Semester {stu?.current_sem ?? ''}
+          </p>
+          <p className="text-[11px] text-slate-500">
+            Your upcoming timetable and hall seat will appear here once COE opens your Semester {stu?.current_sem ?? ''} exam
+            registration and publishes seating. View past exam records under <strong>Results</strong>.
+          </p>
         </div>
       ) : (
-        courses.map((c) => (
-          <div key={c.course_id} className="rounded-2xl bg-white border border-slate-200 p-3.5 space-y-1.5 shadow-xs">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <span className="font-mono text-xs font-bold text-indigo-800">{c.course_code}</span>
-                <p className="text-xs font-semibold text-slate-900">{c.course_title}</p>
-              </div>
-              {c.is_omr_exam && (
-                <span className="rounded-full bg-purple-100 text-purple-800 px-2 py-0.5 text-[9px] font-bold">OMR</span>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-100 text-[11px]">
-              <span className="inline-flex items-center gap-1 text-slate-600">
-                <Calendar className="h-3.5 w-3.5 text-amber-500" />
-                {c.exam_date ? `${c.exam_date} · ${fmtPortalSession(c.session_code, c.start_time, c.end_time)}` : 'Date TBA'}
-              </span>
-              <span className="inline-flex items-center gap-1 font-bold text-emerald-700">
-                <MapPin className="h-3.5 w-3.5" />
-                {c.room_number ? `Rm ${c.room_number} · Seat ${c.seat_label ?? ''}` : 'Seat Pending'}
-              </span>
-            </div>
+        <>
+          <div className="rounded-xl bg-[#1a1c4b] text-white px-3.5 py-2 text-xs flex items-center justify-between">
+            <span className="font-bold truncate">{upcomingCycle.name}</span>
+            <span className="font-mono text-[10px] text-amber-300 shrink-0 ml-2">{upcomingCycle.code}</span>
           </div>
-        ))
+          {courses.map((c) => {
+            const noHallSeat = Boolean(c.is_online_exempt || c.is_cie_only)
+            return (
+              <div key={c.course_id} className="rounded-2xl bg-white border border-slate-200 p-3.5 space-y-1.5 shadow-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <span className="font-mono text-xs font-bold text-indigo-800">{c.course_code}</span>
+                    <p className="text-xs font-semibold text-slate-900">{c.course_title}</p>
+                  </div>
+                  {c.is_omr_exam && (
+                    <span className="rounded-full bg-purple-100 text-purple-800 px-2 py-0.5 text-[9px] font-bold">OMR</span>
+                  )}
+                  {c.is_online_exempt && (
+                    <span className="rounded-full bg-amber-100 text-amber-900 px-2 py-0.5 text-[9px] font-bold">ONLINE</span>
+                  )}
+                  {!c.is_online_exempt && c.is_cie_only && (
+                    <span className="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5 text-[9px] font-bold">CIE-ONLY</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-100 text-[11px]">
+                  <span className="inline-flex items-center gap-1 text-slate-600">
+                    <Calendar className="h-3.5 w-3.5 text-amber-500" />
+                    {noHallSeat
+                      ? 'No Written SEE Exam'
+                      : c.exam_date
+                        ? `${c.exam_date} · ${fmtPortalSession(c.session_code, c.start_time, c.end_time)}`
+                        : 'Date TBA'}
+                  </span>
+                  <span className={cn('inline-flex items-center gap-1 font-bold', noHallSeat ? 'text-slate-500' : 'text-emerald-700')}>
+                    <MapPin className="h-3.5 w-3.5" />
+                    {noHallSeat
+                      ? 'Exempt from Seating'
+                      : c.room_number
+                        ? `Rm ${c.room_number} · Seat ${c.seat_label ?? ''}`
+                        : 'Seat Pending'}
+                  </span>
+                </div>
+              </div>
+            )
+          })}
+        </>
       )}
     </div>
   )
@@ -800,13 +833,13 @@ export function StudentPortalPage() {
     <div className="rounded-2xl bg-white border border-slate-200 p-4 space-y-3">
       {!snapshot?.hall_ticket ? (
         <p className="text-xs text-slate-500 text-center py-6">
-          Hall Ticket has not been issued for {snapshot?.cycle?.code ?? 'this cycle'} yet.
+          No active exam Hall Ticket issued for Semester {stu?.current_sem ?? ''} yet.
         </p>
       ) : snapshot.hall_ticket.status === 'ISSUED' ? (
         <>
           <div className="flex items-center gap-2 text-emerald-700 text-xs font-bold">
             <CheckCircle2 className="h-4 w-4" />
-            Hall Ticket Issued &amp; Ready ({snapshot.cycle?.code})
+            Hall Ticket Issued &amp; Ready ({upcomingCycle?.code ?? snapshot.cycle?.code})
           </div>
           <div className="rounded-xl bg-amber-50/60 border border-amber-200 p-3 text-xs space-y-1">
             <p><strong>Ticket No:</strong> <span className="font-mono">{snapshot.hall_ticket.ticket_number}</span></p>
@@ -835,20 +868,39 @@ export function StudentPortalPage() {
 
   const renderSubjectsContent = () => (
     <div className="rounded-2xl bg-white border border-slate-200 p-4 space-y-2.5">
-      <h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-700">
-        Academic Subjects ({consolidatedResults.length || courses.length})
-      </h3>
-      {courses.length === 0 && consolidatedResults.length === 0 ? (
-        <p className="text-xs text-slate-500 text-center py-4">No registered subjects found.</p>
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-700">
+          Semester {stu?.current_sem ?? ''} Registered Subjects ({currentSubjects.length})
+        </h3>
+        {currentSubjects[0] && (
+          <span className="rounded bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-800">
+            AY {currentSubjects[0].academic_year} · {currentSubjects[0].term}
+          </span>
+        )}
+      </div>
+      {currentSubjects.length === 0 ? (
+        <div className="text-center py-5 space-y-1">
+          <p className="text-xs font-semibold text-slate-700">
+            Semester {stu?.current_sem ?? ''} Course Registration Pending
+          </p>
+          <p className="text-[11px] text-slate-500">
+            Register your Semester {stu?.current_sem ?? ''} courses at <strong>Front Office → Course Registration (Phase 1)</strong>.
+          </p>
+        </div>
       ) : (
         <ul className="divide-y divide-slate-100 text-xs">
-          {(courses.length > 0 ? courses : consolidatedResults).map((c) => (
+          {currentSubjects.map((c) => (
             <li key={c.course_id} className="py-2 flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <span className="font-mono font-bold text-indigo-900">{c.course_code}</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono font-bold text-indigo-900">{c.course_code}</span>
+                  <span className="rounded bg-slate-100 px-1.5 py-0.2 text-[9px] font-semibold text-slate-600">
+                    {c.course_type}
+                  </span>
+                </div>
                 <p className="text-slate-600 truncate">{c.course_title}</p>
               </div>
-              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+              <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
                 {c.credits} Cr
               </span>
             </li>

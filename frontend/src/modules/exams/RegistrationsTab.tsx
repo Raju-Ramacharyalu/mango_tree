@@ -118,7 +118,7 @@ const PAY_STATUS_STYLES: Record<PaymentStatus, string> = {
 
 export function RegistrationsTab({ institutionId, cycle, canManage, canDelete }: Props) {
   const queryClient = useQueryClient()
-  const { session } = useAppStore()
+  const { session, activeAcademicYear, activeTerm } = useAppStore()
 
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('ALL')
@@ -511,7 +511,29 @@ export function RegistrationsTab({ institutionId, cycle, canManage, canDelete }:
         cohortCourses = coursesCatalog.filter((c) => ids.has(c.id))
       }
 
-      const subjectTotal = cohortCourses.reduce((sum, c) => sum + computeCourseFee(c, 1, rule), 0)
+      // Phase 1 -> Phase 2 Bridge: load students' actual Phase 1 academic_course_registrations (preserves electives & ONLINE!)
+      const catalogById = new Map(coursesCatalog.map((c) => [c.id, c]))
+      const phase1Rows = await fetchAllRows<{ student_id: string; course_id: string }>((from, to) =>
+        supabase
+          .from('academic_course_registrations')
+          .select('student_id, course_id')
+          .eq('institution_id', institutionId)
+          .eq('academic_year', activeAcademicYear)
+          .eq('term', activeTerm)
+          .eq('program_id', bulkProgramId)
+          .eq('status', 'ACTIVE')
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
+      const phase1ByStudent = new Map<string, CourseCatalogOption[]>()
+      for (const row of phase1Rows ?? []) {
+        const crs = catalogById.get(row.course_id)
+        if (!crs) continue
+        const list = phase1ByStudent.get(row.student_id) ?? []
+        if (!list.some((x) => x.id === crs.id)) list.push(crs)
+        phase1ByStudent.set(row.student_id, list)
+      }
+
       const appFee = Number(rule?.application_fee ?? 0)
       const gradeFee = Number(rule?.grade_card_fee ?? 0)
       const defaultCategory = mapCycleToCourseCategory(cycle.cycle_type)
@@ -522,23 +544,27 @@ export function RegistrationsTab({ institutionId, cycle, canManage, canDelete }:
 
       for (let i = 0; i < toInsert.length; i += chunkSize) {
         const batch = toInsert.slice(i, i + chunkSize)
-        const headerRows = batch.map((e) => ({
-          institution_id: institutionId,
-          exam_cycle_id: cycle.id,
-          student_id: e.student_id as string,
-          enrollment_id: e.id as string,
-          program_id: e.program_id as string,
-          academic_period_id: e.current_period_id as string,
-          registration_type: cycle.cycle_type,
-          status: 'DRAFT',
-          application_fee: appFee,
-          grade_card_fee: gradeFee,
-          subject_fee_total: subjectTotal,
-          late_fee: 0,
-          payment_status: 'PENDING',
-          created_by: session?.user.id ?? null,
-          updated_by: session?.user.id ?? null,
-        }))
+        const headerRows = batch.map((e) => {
+          const stuCourses = phase1ByStudent.get(e.student_id as string) ?? cohortCourses
+          const stuSubjTotal = stuCourses.reduce((sum, c) => sum + computeCourseFee(c, 1, rule), 0)
+          return {
+            institution_id: institutionId,
+            exam_cycle_id: cycle.id,
+            student_id: e.student_id as string,
+            enrollment_id: e.id as string,
+            program_id: e.program_id as string,
+            academic_period_id: e.current_period_id as string,
+            registration_type: cycle.cycle_type,
+            status: 'DRAFT',
+            application_fee: appFee,
+            grade_card_fee: gradeFee,
+            subject_fee_total: stuSubjTotal,
+            late_fee: 0,
+            payment_status: 'PENDING',
+            created_by: session?.user.id ?? null,
+            updated_by: session?.user.id ?? null,
+          }
+        })
 
         const { data: insertedHeaders, error: insErr } = await supabase
           .from('exam_registrations')
@@ -548,9 +574,10 @@ export function RegistrationsTab({ institutionId, cycle, canManage, canDelete }:
 
         createdCount += (insertedHeaders ?? []).length
 
-        if (cohortCourses.length > 0 && insertedHeaders && insertedHeaders.length > 0) {
-          const coursePayload = insertedHeaders.flatMap((h) =>
-            cohortCourses.map((c) => ({
+        if (insertedHeaders && insertedHeaders.length > 0) {
+          const coursePayload = insertedHeaders.flatMap((h) => {
+            const stuCourses = phase1ByStudent.get(h.student_id as string) ?? cohortCourses
+            return stuCourses.map((c) => ({
               institution_id: institutionId,
               exam_cycle_id: cycle.id,
               registration_id: h.id as string,
@@ -565,10 +592,12 @@ export function RegistrationsTab({ institutionId, cycle, canManage, canDelete }:
               created_by: session?.user.id ?? null,
               updated_by: session?.user.id ?? null,
             }))
-          )
-          const { error: cErr } = await supabase.from('exam_registration_courses').insert(coursePayload)
-          if (cErr) throw cErr
-          coursesAttached += coursePayload.length
+          })
+          if (coursePayload.length > 0) {
+            const { error: cErr } = await supabase.from('exam_registration_courses').insert(coursePayload)
+            if (cErr) throw cErr
+            coursesAttached += coursePayload.length
+          }
         }
       }
 

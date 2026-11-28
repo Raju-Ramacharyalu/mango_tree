@@ -78,6 +78,25 @@ export interface StudentPortalSnapshot {
     section_name: string | null
     student_category: string
   }
+  current_subjects?: Array<{
+    course_id: string
+    course_code: string
+    course_title: string
+    credits: number
+    course_type: string
+    academic_year: string
+    term: string
+    semester_number: number
+    status: string
+  }>
+  upcoming_cycle?: {
+    id: string
+    code: string
+    name: string
+    cycle_type: string
+    academic_year: string
+    status: string
+  } | null
   cycle?: {
     id: string
     code: string
@@ -115,6 +134,8 @@ export interface StudentPortalSnapshot {
     credits: number
     registration_category: string
     eligibility_status: string
+    is_online_exempt?: boolean
+    is_cie_only?: boolean
     exam_date: string | null
     session_code: string | null
     start_time: string | null
